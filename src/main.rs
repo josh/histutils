@@ -8,6 +8,7 @@ fn parse_format(s: &str) -> Option<ShellFormat> {
     match s {
         "sh" | "bash" => Some(ShellFormat::Sh),
         "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
+        "fish" => Some(ShellFormat::Fish),
         _ => None,
     }
 }
