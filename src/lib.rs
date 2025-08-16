@@ -23,6 +23,22 @@ pub enum ShellFormat {
 /// format. If readers of different formats are provided or no format can be
 /// detected, `None` is returned.
 ///
+/// # Arguments
+///
+/// * `readers` - An iterator of mutable references to readers that implement
+///   `Read + Seek`. The readers will be read from and then reset to the
+///   beginning position.
+///
+/// # Examples
+///
+/// ```
+/// let r1 = std::io::Cursor::new(": 1:0;echo hello\n");
+/// let r2 = std::io::Cursor::new(": 2:0;ls -la\n");
+/// let mut readers = [r1, r2];
+/// let format = histutils::detect_format(readers.iter_mut()).unwrap();
+/// assert_eq!(format, Some(histutils::ShellFormat::ZshExtended));
+/// ```
+///
 /// # Errors
 ///
 /// Returns any I/O error encountered while reading from the inputs.
@@ -52,32 +68,36 @@ where
     Ok(detected)
 }
 
-fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
-    debug_assert!(
-        a.duration == b.duration || a.duration == 0 || b.duration == 0,
-        "merging entries with conflicting durations",
-    );
-    if a.duration == 0 {
-        a.duration = b.duration;
-    }
-    if a.paths.is_empty() {
-        a.paths = b.paths;
-    } else if !b.paths.is_empty() {
-        for p in b.paths {
-            if !a.paths.contains(&p) {
-                a.paths.push(p);
-            }
-        }
-    }
-    a
-}
-
-/// Parses history entries from multiple readers.
+/// Parses and merges history entries from multiple readers.
+///
+/// This function reads shell history from multiple sources, parses the entries,
+/// and merges them into a single timestamp sorted collection.
+///
+/// # Arguments
+///
+/// * `readers` - An iterator of tuples containing a reader and its associated
+///   path. The reader must implement `Read` and the path must implement
+///   `AsRef<Path>`. The path is used for error reporting and format detection.
+///
+/// # Examples
+///
+/// ```
+/// let zsh_history = std::io::Cursor::new(": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n");
+/// let fish_history = std::io::Cursor::new("- cmd: pwd\n  when: 1609459250\n");
+///
+/// let readers = [
+///     (zsh_history, std::path::Path::new("~/.zsh_history")),
+///     (fish_history, std::path::Path::new("~/.local/share/fish/fish_history")),
+/// ];
+///
+/// let entries = histutils::parse_entries(readers).unwrap();
+/// assert_eq!(entries.len(), 3);
+/// ```
 ///
 /// # Errors
 ///
 /// Returns an error if reading from any reader fails.
-pub fn parse_readers<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+pub fn parse_entries<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
 where
     R: Read,
     P: AsRef<Path>,
@@ -100,6 +120,26 @@ where
         }
     }
     Ok(map.into_iter().flat_map(|(_, v)| v).collect())
+}
+
+fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
+    debug_assert!(
+        a.duration == b.duration || a.duration == 0 || b.duration == 0,
+        "merging entries with conflicting durations",
+    );
+    if a.duration == 0 {
+        a.duration = b.duration;
+    }
+    if a.paths.is_empty() {
+        a.paths = b.paths;
+    } else if !b.paths.is_empty() {
+        for p in b.paths {
+            if !a.paths.contains(&p) {
+                a.paths.push(p);
+            }
+        }
+    }
+    a
 }
 
 fn detect_format_line(first_line: &[u8]) -> ShellFormat {
@@ -696,7 +736,7 @@ mod tests {
     fn parse_simple_entry() {
         let input = "echo hello\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello");
@@ -706,7 +746,7 @@ mod tests {
     fn parse_simple_entries() {
         let input = "echo hello\nls -la\npwd\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].command, "echo hello");
@@ -718,7 +758,7 @@ mod tests {
     fn parse_simple_multiline_entry() {
         let input = "echo hello\\\nanother\\\nline\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello\nanother\nline");
@@ -728,7 +768,7 @@ mod tests {
     fn roundtrip_sh_backslash() {
         let original = "echo foo \\ hello\n";
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, r"echo foo \ hello");
@@ -743,7 +783,7 @@ mod tests {
     fn roundtrip_sh_multiline() {
         let original = "echo foo\\\nbar\\\nbaz\n";
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
@@ -758,7 +798,7 @@ mod tests {
     fn parse_extended_entries() {
         let input = ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
 
@@ -840,7 +880,7 @@ mod tests {
         let original = ": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
 
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "echo hello\nworld");
@@ -857,7 +897,7 @@ mod tests {
     fn roundtrip_zsh_colon_continuation() {
         let original = ": 100:0;echo foo\\\n: 200:0;echo bar\n";
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 100);
@@ -873,7 +913,7 @@ mod tests {
     fn parse_fish_entry_basic() {
         let input = "- cmd: cargo build\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1_700_000_000);
@@ -885,7 +925,7 @@ mod tests {
         let input =
             "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].paths, vec!["~/Developer/histutils".to_string()]);
@@ -895,7 +935,7 @@ mod tests {
     fn parse_fish_entry_multiple_paths() {
         let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n    - ~/project2\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -908,7 +948,7 @@ mod tests {
     fn parse_fish_entry_paths_then_new_entry() {
         let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n- cmd: echo hi\n  when: 1700000001\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].paths, vec!["~/project1".to_string()]);
@@ -919,7 +959,7 @@ mod tests {
     fn parse_fish_multiline_command() {
         let input = "- cmd: echo \"hello\\nmultiline\\nstring\"\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo \"hello\nmultiline\nstring\"");
@@ -929,7 +969,7 @@ mod tests {
     fn parse_fish_colon_in_command() {
         let input = "- cmd: git commit -m \"Test: something\"\n  when: 1516464765\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1_516_464_765);
@@ -959,7 +999,7 @@ mod tests {
         let original =
             "- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
@@ -972,7 +1012,7 @@ mod tests {
     fn roundtrip_fish_with_paths() {
         let original = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
         let reader = Cursor::new(original);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
@@ -985,7 +1025,7 @@ mod tests {
     fn parse_reader_ignores_invalid_and_empty() {
         let input = ": invalid\n\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
         assert!(entries.is_empty());
     }
 
@@ -993,7 +1033,7 @@ mod tests {
     fn parse_reader_handles_invalid_utf8_in_command() {
         let input = b": 1:0;ok\n: 2:0;bad\xff\n: 3:0;again\n".to_vec();
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1].command, "bad\u{FFFD}");
     }
@@ -1003,7 +1043,7 @@ mod tests {
         let input =
             b"- cmd: foo\n  when: 1\n- cmd: bad\xff\n  when: 2\n- cmd: bar\n  when: 3\n".to_vec();
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1].command, "bad\u{FFFD}");
     }
@@ -1012,7 +1052,7 @@ mod tests {
     fn parse_reader_errors_on_invalid_zsh_metadata() {
         let input = b": 1:\xff;echo bad\n".to_vec();
         let reader = Cursor::new(input);
-        let err = parse_readers([(reader, "-")]).expect_err("should error");
+        let err = parse_entries([(reader, "-")]).expect_err("should error");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
@@ -1020,7 +1060,7 @@ mod tests {
     fn parse_reader_errors_on_invalid_fish_metadata() {
         let input = b"- cmd: echo\n  when: \xff\n".to_vec();
         let reader = Cursor::new(input);
-        let err = parse_readers([(reader, "-")]).expect_err("should error");
+        let err = parse_entries([(reader, "-")]).expect_err("should error");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
@@ -1028,7 +1068,7 @@ mod tests {
     fn parse_readers_sorts_by_timestamp() {
         let r1 = Cursor::new(": 2:0;two\n");
         let r2 = Cursor::new(": 1:0;one\n");
-        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        let entries = parse_entries([(r1, "-"), (r2, "-")]).expect("should parse");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[1].timestamp, 2);
@@ -1038,7 +1078,7 @@ mod tests {
     fn parse_readers_preserves_order_with_same_timestamp() {
         let r1 = Cursor::new(": 100:0;b\n");
         let r2 = Cursor::new(": 100:0;a\n");
-        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        let entries = parse_entries([(r1, "-"), (r2, "-")]).expect("should parse");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "b");
         assert_eq!(entries[1].command, "a");
@@ -1048,7 +1088,7 @@ mod tests {
     fn parse_readers_deduplicates_exact_matches() {
         let r1 = Cursor::new(": 1:0;one\n");
         let r2 = Cursor::new(": 1:0;one\n");
-        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        let entries = parse_entries([(r1, "-"), (r2, "-")]).expect("should parse");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[0].command, "one");
@@ -1058,7 +1098,7 @@ mod tests {
     fn parse_readers_keeps_zero_timestamp_duplicates() {
         let r1 = Cursor::new("echo hi\n");
         let r2 = Cursor::new("echo hi\n");
-        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        let entries = parse_entries([(r1, "-"), (r2, "-")]).expect("should parse");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 0);
         assert_eq!(entries[1].timestamp, 0);
@@ -1070,7 +1110,7 @@ mod tests {
     fn parse_readers_merges_entries_with_richer_info() {
         let zsh = Cursor::new(": 1000:5;echo hello\n");
         let fish = Cursor::new("- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n");
-        let entries = parse_readers([(zsh, "-"), (fish, "-")]).expect("should parse");
+        let entries = parse_entries([(zsh, "-"), (fish, "-")]).expect("should parse");
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.timestamp, 1000);
@@ -1086,7 +1126,7 @@ mod tests {
         let fish = Cursor::new("- cmd: echo fish\n  when: 2\n");
 
         let entries =
-            parse_readers([(sh, "sh"), (zsh, "zsh"), (fish, "fish")]).expect("should parse");
+            parse_entries([(sh, "sh"), (zsh, "zsh"), (fish, "fish")]).expect("should parse");
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].command, "echo sh");
@@ -1101,7 +1141,7 @@ mod tests {
     fn parse_fish_entry_handles_escapes() {
         let input = "- cmd: first\\nsecond\\\\third\\x\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        let entries = parse_entries([(reader, "-")]).expect("should parse");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "first\nsecond\\third\\x");
     }

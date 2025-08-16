@@ -1,4 +1,4 @@
-use histutils::{ShellFormat, detect_format};
+use histutils::{ShellFormat, detect_format, parse_entries, write_entries};
 use std::env;
 use std::fs::File;
 use std::io::{self, Read, Seek};
@@ -75,13 +75,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let entries = histutils::parse_readers(inputs.into_iter())?;
+    let entries = parse_entries(inputs.into_iter())?;
 
     if count {
         println!("{}", entries.len());
     } else {
         let mut stdout = io::stdout();
-        histutils::write_entries(&mut stdout, entries, format.unwrap())?;
+        write_entries(&mut stdout, entries, format.unwrap())?;
     }
 
     Ok(())
