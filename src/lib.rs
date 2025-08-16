@@ -442,6 +442,36 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_sh_backslash() {
+        let original = "echo foo \\ hello\n";
+        let reader = Cursor::new(original);
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, r"echo foo \ hello");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
+        let result = String::from_utf8(output).expect("should be valid utf8");
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn roundtrip_sh_multiline() {
+        let original = "echo foo\\\nbar\\\nbaz\n";
+        let reader = Cursor::new(original);
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
+        let result = String::from_utf8(output).expect("should be valid utf8");
+        assert_eq!(result, original);
+    }
+
+    #[test]
     fn parse_extended_entries() {
         let input = ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n";
         let reader = Cursor::new(input);
@@ -537,6 +567,22 @@ mod tests {
         write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
         let result = String::from_utf8(output).expect("should be valid utf8");
 
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn roundtrip_zsh_colon_continuation() {
+        let original = ": 100:0;echo foo\\\n: 200:0;echo bar\n";
+        let reader = Cursor::new(original);
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].timestamp, 100);
+        assert_eq!(entries[0].command, "echo foo\n: 200:0;echo bar");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
+        let result = String::from_utf8(output).expect("should be valid utf8");
         assert_eq!(result, original);
     }
 
