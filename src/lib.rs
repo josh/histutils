@@ -60,9 +60,12 @@ fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec
     let mut lines = buf_reader.lines().peekable();
     let mut line_no: usize = 0;
 
-    if let Some(Ok(first_line)) = lines.peek()
-        && first_line.trim_start().starts_with("- cmd:")
-    {
+    let is_fish_format = matches!(
+        lines.peek(),
+        Some(Ok(first_line)) if first_line.trim_start().starts_with("- cmd:")
+    );
+
+    if is_fish_format {
         while let Some(line_res) = lines.next() {
             line_no += 1;
             let line = line_res?;
