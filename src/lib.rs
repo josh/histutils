@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,15 +44,14 @@ pub enum ShellFormat {
 /// Returns any I/O error encountered while reading from the inputs.
 pub fn detect_format<'a, R, I>(readers: I) -> io::Result<Option<ShellFormat>>
 where
-    R: Read + io::Seek + 'a + ?Sized,
+    R: BufRead + io::Seek + 'a + ?Sized,
     I: Iterator<Item = &'a mut R>,
 {
     let mut detected: Option<ShellFormat> = None;
     for reader in readers {
-        let mut buf_reader = io::BufReader::new(reader);
         let mut line = Vec::new();
-        let bytes = buf_reader.read_until(b'\n', &mut line)?;
-        buf_reader.into_inner().seek(io::SeekFrom::Start(0))?;
+        let bytes = reader.read_until(b'\n', &mut line)?;
+        reader.seek(io::SeekFrom::Start(0))?;
         if bytes == 0 {
             continue;
         }
@@ -99,7 +98,7 @@ where
 /// Returns an error if reading from any reader fails.
 pub fn parse_entries<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
 where
-    R: Read,
+    R: BufRead,
     P: AsRef<Path>,
     I: IntoIterator<Item = (R, P)>,
 {
@@ -322,9 +321,8 @@ impl<R: BufRead> Iterator for ByteLines<R> {
     }
 }
 
-fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
-    let buf_reader = io::BufReader::new(reader);
-    let mut lines = ByteLines::new(buf_reader).peekable();
+fn parse_reader<R: BufRead, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
+    let mut lines = ByteLines::new(reader).peekable();
     let path = path.as_ref();
 
     match detect_format_from_lines(&mut lines) {

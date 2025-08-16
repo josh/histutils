@@ -1,11 +1,11 @@
 use histutils::{ShellFormat, detect_format, parse_entries, write_entries};
 use std::env;
 use std::fs::File;
-use std::io::{self, Read, Seek};
+use std::io::{self, BufRead, BufReader, Read, Seek};
 use std::process;
 
-trait ReadSeek: Read + Seek {}
-impl<T: Read + Seek> ReadSeek for T {}
+trait ReadSeek: BufRead + Seek {}
+impl<T: BufRead + Seek> ReadSeek for T {}
 
 fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
@@ -62,7 +62,7 @@ fn main() -> io::Result<()> {
     } else {
         for p in paths {
             let f = File::open(&p)?;
-            inputs.push((Box::new(f), p));
+            inputs.push((Box::new(BufReader::new(f)), p));
         }
     }
 
