@@ -12,12 +12,27 @@ pub struct HistoryEntry {
 pub enum ShellFormat {
     Sh,
     ZshExtended,
+    Fish,
 }
 
 pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
     let mut entries = Vec::new();
     let buf_reader = io::BufReader::new(reader);
-    let mut lines = buf_reader.lines();
+    let mut lines = buf_reader.lines().peekable();
+
+    if let Some(Ok(first_line)) = lines.peek() {
+        if first_line.trim_start().starts_with("- cmd:") {
+            while let Some(line_res) = lines.next() {
+                let line = line_res?;
+                if line.trim_start().starts_with("- cmd:") {
+                    if let Some(entry) = parse_fish_entry(line, &mut lines) {
+                        entries.push(entry);
+                    }
+                }
+            }
+            return Ok(entries);
+        }
+    }
 
     while let Some(line_res) = lines.next() {
         let mut line = line_res?;
@@ -78,6 +93,84 @@ fn parse_line(line: &str) -> Option<HistoryEntry> {
     }
 }
 
+fn unescape_fish(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    'n' => out.push('\n'),
+                    '\\' => out.push('\\'),
+                    other => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                }
+            } else {
+                out.push('\\');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn parse_fish_entry<I>(
+    first_line: String,
+    lines: &mut std::iter::Peekable<I>,
+) -> Option<HistoryEntry>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let command_raw = first_line.trim_start().strip_prefix("- cmd:")?.trim_start();
+    let command = unescape_fish(command_raw);
+    let mut timestamp: Option<i64> = None;
+    let mut paths: Vec<String> = Vec::new();
+
+    while let Some(peek_res) = lines.peek() {
+        let peek_line = peek_res.as_ref().ok()?;
+        let t = peek_line.trim_start();
+        if t.starts_with("- cmd:") {
+            break;
+        }
+
+        let line = lines.next().unwrap().ok()?;
+        let t = line.trim_start();
+
+        if let Some(rest) = t.strip_prefix("when:") {
+            let ts_str = rest.trim_start();
+            timestamp = ts_str.parse().ok();
+        } else if t.starts_with("paths:") {
+            while let Some(path_res) = lines.peek() {
+                let path_line = path_res.as_ref().ok()?;
+                let ps = path_line.trim_start();
+                if ps.starts_with("- ") {
+                    let line = lines.next().unwrap().ok()?;
+                    let ps = line.trim_start();
+                    paths.push(unescape_fish(&ps[2..]));
+                } else if ps.is_empty() {
+                    let _ = lines.next();
+                    break;
+                } else {
+                    break;
+                }
+            }
+        } else if t.is_empty() {
+            continue;
+        }
+    }
+
+    let timestamp = timestamp?;
+    Some(HistoryEntry {
+        timestamp,
+        duration: 0,
+        command,
+        paths,
+    })
+}
+
 pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
@@ -86,6 +179,7 @@ pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     match format {
         ShellFormat::Sh => write_sh_format(writer, entries),
         ShellFormat::ZshExtended => write_zsh_format(writer, entries),
+        ShellFormat::Fish => write_fish_format(writer, entries),
     }
 }
 
@@ -115,11 +209,41 @@ fn write_zsh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     Ok(())
 }
 
+fn write_fish_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
+    writer: &mut W,
+    entries: I,
+) -> io::Result<()> {
+    for entry in entries {
+        writeln!(writer, "- cmd: {}", escape_fish(&entry.command))?;
+        writeln!(writer, "  when: {}", entry.timestamp)?;
+        if !entry.paths.is_empty() {
+            writeln!(writer, "  paths:")?;
+            for p in entry.paths {
+                writeln!(writer, "    - {}", escape_fish(&p))?;
+            }
+        }
+        writeln!(writer)?;
+    }
+    Ok(())
+}
+
 fn escape_command(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
             '\n' => out.push_str("\\\n"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn escape_fish(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
         }
     }
@@ -258,6 +382,94 @@ mod tests {
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
         let result = String::from_utf8(output).expect("should be valid utf8");
+
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn parse_fish_entry_basic() {
+        let input = "- cmd: cargo build\n  when: 1700000000\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].timestamp, 1700000000);
+        assert_eq!(entries[0].command, "cargo build");
+    }
+
+    #[test]
+    fn parse_fish_entry_with_paths() {
+        let input =
+            "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].paths, vec!["~/Developer/histutils".to_string()]);
+    }
+
+    #[test]
+    fn parse_fish_entry_multiple_paths() {
+        let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n    - ~/project2\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].paths,
+            vec!["~/project1".to_string(), "~/project2".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_fish_multiline_command() {
+        let input = "- cmd: echo \"hello\\nmultiline\\nstring\"\n  when: 1700000000\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "echo \"hello\nmultiline\nstring\"");
+    }
+
+    #[test]
+    fn parse_fish_colon_in_command() {
+        let input = "- cmd: git commit -m \"Test: something\"\n  when: 1516464765\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].timestamp, 1516464765);
+        assert_eq!(entries[0].command, "git commit -m \"Test: something\"");
+    }
+
+    #[test]
+    fn write_fish_entries() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1700000000,
+            duration: 0,
+            command: "cargo build".to_string(),
+            paths: vec!["~/Developer/histutils".to_string()],
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+
+        let result = String::from_utf8(output).expect("valid utf8");
+        let expected =
+            "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn roundtrip_fish_multiline() {
+        let original =
+            "- cmd: echo hello\\nworld\n  when: 1700000001\n\n- cmd: ls\n  when: 1700000002\n\n";
+        let reader = Cursor::new(original);
+        let entries = parse_reader(reader).expect("should parse");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+        let result = String::from_utf8(output).expect("valid utf8");
 
         assert_eq!(result, original);
     }
