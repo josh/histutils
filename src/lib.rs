@@ -56,6 +56,20 @@ pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
     Ok(entries)
 }
 
+pub fn parse_readers<R, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+where
+    R: Read,
+    I: IntoIterator<Item = R>,
+{
+    let mut all_entries = Vec::new();
+    for reader in readers {
+        let mut entries = parse_reader(reader)?;
+        all_entries.append(&mut entries);
+    }
+    all_entries.sort_by_key(|e| e.timestamp);
+    Ok(all_entries)
+}
+
 fn parse_line(line: &str) -> Option<HistoryEntry> {
     let s = line.trim_start();
 
@@ -480,6 +494,20 @@ mod tests {
         let reader = Cursor::new(input);
         let entries = parse_reader(reader).expect("should parse");
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_multiple_readers_merges_and_sorts() {
+        let r1 = Cursor::new(": 1700000002:0;ls\n: 1700000003:0;echo a\n");
+        let r2 = Cursor::new(": 1700000001:0;pwd\n: 1700000004:0;date\n");
+        let entries = parse_readers(vec![r1, r2]).expect("should parse");
+        let timestamps: Vec<i64> = entries.iter().map(|e| e.timestamp).collect();
+        assert_eq!(
+            timestamps,
+            vec![1700000001, 1700000002, 1700000003, 1700000004]
+        );
+        assert_eq!(entries[0].command, "pwd");
+        assert_eq!(entries[3].command, "date");
     }
 
     #[test]
