@@ -1,17 +1,8 @@
-use histutils::ShellFormat;
+use histutils::{ShellFormat, parse_format};
 use std::env;
 use std::fs::File;
 use std::io;
 use std::process;
-
-fn parse_format(s: &str) -> Option<ShellFormat> {
-    match s {
-        "sh" | "bash" => Some(ShellFormat::Sh),
-        "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
-        "fish" => Some(ShellFormat::Fish),
-        _ => None,
-    }
-}
 
 fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
@@ -64,9 +55,9 @@ fn main() -> io::Result<()> {
             let f = File::open(p)?;
             readers.push((f, p.clone()));
         }
-        histutils::parse_readers_with_paths(readers)?
+        histutils::parse_readers(readers)?
     } else {
-        histutils::parse_reader(io::stdin())?
+        histutils::parse_readers([(io::stdin(), "-")])?
     };
 
     let mut stdout = io::stdout();
