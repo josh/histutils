@@ -1,0 +1,15 @@
+[package]
+name = "histutils"
+version = "0.1.0"
+edition = "2021"
+description = "Import, export or merge zsh or fish history files."
+license = "MIT"
+readme = "README.md"
+
+[lib]
+name = "histutils"
+path = "src/lib.rs"
+
+[[bin]]
+name = "histutils"
+path = "src/main.rs"
