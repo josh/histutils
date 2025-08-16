@@ -27,6 +27,33 @@ pub fn parse_reader_with_path<R: Read, P: AsRef<Path>>(
     parse_reader_inner(reader, Some(path.as_ref()))
 }
 
+pub fn parse_readers<R, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+where
+    R: Read,
+    I: IntoIterator<Item = R>,
+{
+    let mut entries = Vec::new();
+    for reader in readers {
+        entries.extend(parse_reader(reader)?);
+    }
+    entries.sort_by_key(|e| e.timestamp);
+    Ok(entries)
+}
+
+pub fn parse_readers_with_paths<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+where
+    R: Read,
+    P: AsRef<Path>,
+    I: IntoIterator<Item = (R, P)>,
+{
+    let mut entries = Vec::new();
+    for (reader, path) in readers {
+        entries.extend(parse_reader_with_path(reader, path)?);
+    }
+    entries.sort_by_key(|e| e.timestamp);
+    Ok(entries)
+}
+
 fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec<HistoryEntry>> {
     let mut entries = Vec::new();
     let buf_reader = io::BufReader::new(reader);
@@ -544,6 +571,16 @@ mod tests {
         let reader = Cursor::new(input);
         let entries = parse_reader(reader).expect("should parse");
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_readers_sorts_by_timestamp() {
+        let r1 = Cursor::new(": 2:0;two\n");
+        let r2 = Cursor::new(": 1:0;one\n");
+        let entries = parse_readers(vec![r1, r2]).expect("should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].timestamp, 1);
+        assert_eq!(entries[1].timestamp, 2);
     }
 
     #[test]
