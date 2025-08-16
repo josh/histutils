@@ -28,42 +28,76 @@ pub fn parse_reader_with_path<R: Read, P: AsRef<Path>>(
 }
 
 fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec<HistoryEntry>> {
-    let mut entries = Vec::new();
     let buf_reader = io::BufReader::new(reader);
     let mut lines = buf_reader.lines().peekable();
     let mut line_no: usize = 0;
 
-    if let Some(Ok(first_line)) = lines.peek()
-        && first_line.trim_start().starts_with("- cmd:")
-    {
-        while let Some(line_res) = lines.next() {
-            line_no += 1;
-            let line = line_res?;
-            if line.trim_start().starts_with("- cmd:") {
-                let start_line = line_no;
-                if let Some(entry) = parse_fish_entry(&line, &mut lines, &mut line_no) {
-                    entries.push(entry);
-                } else {
-                    warn_invalid(path, start_line, &line);
-                }
-            } else if !line.trim().is_empty() {
-                warn_invalid(path, line_no, &line);
-            }
-        }
-        return Ok(entries);
-    }
+    let format = detect_format(&mut lines);
 
+    match format {
+        ShellFormat::Fish => parse_fish_lines(&mut lines, &mut line_no, path),
+        _ => parse_sh_lines(&mut lines, &mut line_no, path),
+    }
+}
+
+fn detect_format<I>(lines: &mut std::iter::Peekable<I>) -> ShellFormat
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    if let Some(Ok(first_line)) = lines.peek() {
+        if first_line.trim_start().starts_with("- cmd:") {
+            return ShellFormat::Fish;
+        }
+    }
+    ShellFormat::Sh
+}
+
+fn parse_fish_lines<I>(
+    lines: &mut std::iter::Peekable<I>,
+    line_no: &mut usize,
+    path: Option<&Path>,
+) -> io::Result<Vec<HistoryEntry>>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let mut entries = Vec::new();
     while let Some(line_res) = lines.next() {
-        line_no += 1;
+        *line_no += 1;
+        let line = line_res?;
+        if line.trim_start().starts_with("- cmd:") {
+            let start_line = *line_no;
+            if let Some(entry) = parse_fish_entry(&line, lines, line_no) {
+                entries.push(entry);
+            } else {
+                warn_invalid(path, start_line, &line);
+            }
+        } else if !line.trim().is_empty() {
+            warn_invalid(path, *line_no, &line);
+        }
+    }
+    Ok(entries)
+}
+
+fn parse_sh_lines<I>(
+    lines: &mut std::iter::Peekable<I>,
+    line_no: &mut usize,
+    path: Option<&Path>,
+) -> io::Result<Vec<HistoryEntry>>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let mut entries = Vec::new();
+    while let Some(line_res) = lines.next() {
+        *line_no += 1;
         let mut line = line_res?;
-        let start_line = line_no;
+        let start_line = *line_no;
 
         while line.ends_with('\\') {
             line.pop();
             line.push('\n');
 
             if let Some(next_line_res) = lines.next() {
-                line_no += 1;
+                *line_no += 1;
                 let next_line = next_line_res?;
                 line.push_str(&next_line);
             } else {
