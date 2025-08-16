@@ -16,12 +16,12 @@ fn parse_format(s: &str) -> Option<ShellFormat> {
 fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
     let mut format = ShellFormat::ZshExtended;
-    let mut path: Option<String> = None;
+    let mut paths: Vec<String> = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("usage: histutils [--format FORMAT] [--version] [FILE]");
+                println!("usage: histutils [--format FORMAT] [--version] [FILE ...]");
                 return Ok(());
             }
             "--version" | "-V" => {
@@ -53,19 +53,21 @@ fn main() -> io::Result<()> {
                 };
             }
             _ => {
-                if path.is_none() {
-                    path = Some(arg);
-                } else {
+                if arg.starts_with('-') {
                     eprintln!("unexpected argument: {arg}");
                     process::exit(1);
                 }
+                paths.push(arg);
             }
         }
     }
 
-    let entries = if let Some(path) = path {
-        let f = File::open(path)?;
-        histutils::parse_reader(f)?
+    let entries = if !paths.is_empty() {
+        let readers: Vec<File> = paths
+            .into_iter()
+            .map(File::open)
+            .collect::<io::Result<Vec<_>>>()?;
+        histutils::parse_readers(readers)?
     } else {
         histutils::parse_reader(io::stdin())?
     };
