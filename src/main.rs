@@ -1,11 +1,11 @@
-use histutils::{HistoryFile, ShellFormat, detect_format, parse_entries, write_entries};
+use histutils::{HistoryFile, ShellFormat, parse_entries_and_format, write_entries};
 use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Seek};
+use std::io::{self, BufRead, BufReader, Read};
 use std::process;
 
-trait ReadSeek: BufRead + Seek {}
-impl<T: BufRead + Seek> ReadSeek for T {}
+trait ReadSeek: BufRead {}
+impl<T: BufRead> ReadSeek for T {}
 
 fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
@@ -76,20 +76,17 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if format.is_none() {
-        let detected = detect_format(history_files.iter_mut())?;
-        format = detected;
-        if format.is_none() {
-            eprintln!("could not detect history format; please specify --format");
-            process::exit(1);
-        }
-    }
-
-    let entries = parse_entries(history_files)?;
+    let (entries, detected_format) = parse_entries_and_format(history_files)?;
 
     if count {
         println!("{}", entries.len());
     } else {
+        format = format.or(detected_format);
+        if format.is_none() {
+            eprintln!("could not detect history format; please specify --format");
+            process::exit(1);
+        }
+
         let mut stdout = io::stdout();
         write_entries(&mut stdout, entries, format.unwrap())?;
     }

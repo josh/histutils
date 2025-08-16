@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, Seek, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub enum ShellFormat {
 #[derive(Debug)]
 pub struct HistoryFile<R>
 where
-    R: BufRead + Seek,
+    R: BufRead,
 {
     /// The reader for accessing the history file contents.
     pub reader: R,
@@ -64,54 +64,6 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<std::io::Cursor<&'a [
     }
 }
 
-/// Detects the history format of one or more history files.
-///
-/// Returns `Some(ShellFormat)` if all history files appear to be in the same
-/// format. If history files of different formats are provided or no format can be
-/// detected, `None` is returned.
-///
-/// # Arguments
-///
-/// * `readers` - An iterator of `HistoryFile` instances. Each file's reader
-///   will be read from and then reset to the beginning position.
-///
-/// # Examples
-///
-/// ```
-/// let mut h1: histutils::HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-/// let mut h2: histutils::HistoryFile<_> = ": 1234567891:0;ls -la\n".into();
-/// let format = histutils::detect_format([&mut h1, &mut h2].into_iter()).unwrap();
-/// assert_eq!(format, Some(histutils::ShellFormat::ZshExtended));
-/// ```
-///
-/// # Errors
-///
-/// Returns any I/O error encountered while reading from the inputs.
-pub fn detect_format<'a, R, I>(readers: I) -> io::Result<Option<ShellFormat>>
-where
-    R: BufRead + Seek + 'a,
-    I: Iterator<Item = &'a mut HistoryFile<R>>,
-{
-    let mut detected: Option<ShellFormat> = None;
-    for history_file in readers {
-        let mut line = Vec::new();
-        let bytes = history_file.reader.read_until(b'\n', &mut line)?;
-        history_file.reader.seek(io::SeekFrom::Start(0))?;
-        if bytes == 0 {
-            continue;
-        }
-        let fmt = detect_format_line(&line);
-        if let Some(existing) = detected {
-            if existing != fmt {
-                return Ok(None);
-            }
-        } else {
-            detected = Some(fmt);
-        }
-    }
-    Ok(detected)
-}
-
 /// Parses and merges history entries from multiple readers.
 ///
 /// This function reads shell history from multiple sources, parses the entries,
@@ -138,13 +90,82 @@ where
 /// Returns an error if reading from any reader fails.
 pub fn parse_entries<R, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
 where
-    R: BufRead + io::Seek,
+    R: BufRead,
+    I: IntoIterator<Item = HistoryFile<R>>,
+{
+    let (entries, _format) = parse_entries_and_format(readers)?;
+    Ok(entries)
+}
+
+/// Parses history entries from multiple files and detects their format.
+///
+/// This function combines format detection and entry parsing into a single
+/// operation. It first detects the shell format used by the history files,
+/// then parses all entries and merges them into a timestamp-sorted collection.
+///
+/// # Arguments
+///
+/// * `files` - An iterator of `HistoryFile` instances to parse and analyze.
+///
+/// # Examples
+///
+/// ```
+/// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
+/// let bash_history: histutils::HistoryFile<_> = "echo world\nls\n".into();
+///
+/// let (entries, format) = histutils::parse_entries_and_format([zsh_history, bash_history]).unwrap();
+/// assert!(entries.len() >= 2);
+/// assert!(format.is_none()); // Mixed formats return None
+/// ```
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// - A vector of parsed and merged `HistoryEntry` instances, sorted by timestamp
+/// - An optional `ShellFormat` indicating the detected format, or `None` if
+///   multiple formats are detected or no format can be determined
+///
+/// # Errors
+///
+/// Returns an error if reading from any file fails or if invalid metadata
+/// is encountered in extended shell formats.
+pub fn parse_entries_and_format<R, I>(
+    files: I,
+) -> io::Result<(Vec<HistoryEntry>, Option<ShellFormat>)>
+where
+    R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
 {
     let mut map: BTreeMap<u64, Vec<HistoryEntry>> = BTreeMap::new();
-    for history_file in readers {
+    let mut detected_format: Option<ShellFormat> = None;
+
+    for history_file in files {
         let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
-        for entry in parse_reader(history_file.reader, path)? {
+        let mut lines = ByteLines::new(history_file.reader).peekable();
+
+        // Detect format from first line of this file
+        let file_format = detect_format_from_lines(&mut lines);
+
+        // Check if this format is consistent with previously detected format
+        match detected_format {
+            None => detected_format = Some(file_format),
+            Some(existing) if existing == file_format => {
+                // Consistent format, continue
+            }
+            Some(_) => {
+                // Mixed formats detected, set to None and continue parsing
+                detected_format = None;
+            }
+        }
+
+        // Parse entries from this file using the detected format
+        let entries_result = match file_format {
+            ShellFormat::Fish => parse_fish_format(&mut lines, Some(path)),
+            ShellFormat::ZshExtended => parse_zsh_extended_format(&mut lines, Some(path)),
+            ShellFormat::Sh => parse_sh_format(&mut lines, Some(path)),
+        };
+
+        for entry in entries_result? {
             let entries = map.entry(entry.timestamp).or_default();
             if entry.timestamp == 0 {
                 entries.push(entry);
@@ -158,7 +179,9 @@ where
             }
         }
     }
-    Ok(map.into_iter().flat_map(|(_, v)| v).collect())
+
+    let entries = map.into_iter().flat_map(|(_, v)| v).collect();
+    Ok((entries, detected_format))
 }
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
@@ -358,17 +381,6 @@ impl<R: BufRead> Iterator for ByteLines<R> {
             }
             Err(e) => Some(Err(e)),
         }
-    }
-}
-
-fn parse_reader<R: BufRead, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
-    let mut lines = ByteLines::new(reader).peekable();
-    let path = path.as_ref();
-
-    match detect_format_from_lines(&mut lines) {
-        ShellFormat::Fish => parse_fish_format(&mut lines, Some(path)),
-        ShellFormat::ZshExtended => parse_zsh_extended_format(&mut lines, Some(path)),
-        ShellFormat::Sh => parse_sh_format(&mut lines, Some(path)),
     }
 }
 
@@ -701,64 +713,64 @@ mod tests {
 
     #[test]
     fn detect_format_none() {
-        let readers: Vec<&mut HistoryFile<std::io::Cursor<&[u8]>>> = Vec::new();
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let readers: Vec<HistoryFile<std::io::Cursor<&[u8]>>> = Vec::new();
+        let (_entries, fmt) = parse_entries_and_format(readers).unwrap();
         assert_eq!(fmt, None);
     }
 
     #[test]
     fn detect_format_one_sh() {
-        let mut history_file: HistoryFile<_> = "echo hello\n".into();
-        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
+        let history_file: HistoryFile<_> = "echo hello\n".into();
+        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Sh));
     }
 
     #[test]
     fn detect_format_one_zsh() {
-        let mut history_file: HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
+        let history_file: HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
+        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::ZshExtended));
     }
 
     #[test]
     fn detect_format_one_fish() {
-        let mut history_file: HistoryFile<_> = "- cmd: echo hello\n  when: 1234567890\n".into();
-        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
+        let history_file: HistoryFile<_> = "- cmd: echo hello\n  when: 1234567890\n".into();
+        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Fish));
     }
 
     #[test]
     fn detect_format_multiple_sh() {
-        let mut h1: HistoryFile<_> = "echo foo\n".into();
-        let mut h2: HistoryFile<_> = "echo bar\n".into();
-        let mut h3: HistoryFile<_> = "echo baz\n".into();
-        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
+        let h1: HistoryFile<_> = "echo foo\n".into();
+        let h2: HistoryFile<_> = "echo bar\n".into();
+        let h3: HistoryFile<_> = "echo baz\n".into();
+        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Sh));
     }
 
     #[test]
     fn detect_format_multiple_zsh() {
-        let mut h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
-        let mut h2: HistoryFile<_> = ": 1234567892:0;echo bar\n".into();
-        let mut h3: HistoryFile<_> = ": 1234567893:0;echo baz\n".into();
-        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
+        let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
+        let h2: HistoryFile<_> = ": 1234567892:0;echo bar\n".into();
+        let h3: HistoryFile<_> = ": 1234567893:0;echo baz\n".into();
+        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::ZshExtended));
     }
 
     #[test]
     fn detect_format_multiple_fish() {
-        let mut h1: HistoryFile<_> = "- cmd: echo foo\n  when: 1234567891\n".into();
-        let mut h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
-        let mut h3: HistoryFile<_> = "- cmd: echo baz\n  when: 1234567893\n".into();
-        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
+        let h1: HistoryFile<_> = "- cmd: echo foo\n  when: 1234567891\n".into();
+        let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
+        let h3: HistoryFile<_> = "- cmd: echo baz\n  when: 1234567893\n".into();
+        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Fish));
     }
 
     #[test]
     fn detect_format_mixed() {
-        let mut h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
-        let mut h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
-        let fmt = detect_format([&mut h1, &mut h2].into_iter()).unwrap();
+        let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
+        let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
+        let (_entries, fmt) = parse_entries_and_format([h1, h2]).unwrap();
         assert_eq!(fmt, None);
     }
 
