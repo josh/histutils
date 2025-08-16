@@ -20,18 +20,18 @@ pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
     let buf_reader = io::BufReader::new(reader);
     let mut lines = buf_reader.lines().peekable();
 
-    if let Some(Ok(first_line)) = lines.peek() {
-        if first_line.trim_start().starts_with("- cmd:") {
-            while let Some(line_res) = lines.next() {
-                let line = line_res?;
-                if line.trim_start().starts_with("- cmd:") {
-                    if let Some(entry) = parse_fish_entry(line, &mut lines) {
-                        entries.push(entry);
-                    }
-                }
+    if let Some(Ok(first_line)) = lines.peek()
+        && first_line.trim_start().starts_with("- cmd:")
+    {
+        while let Some(line_res) = lines.next() {
+            let line = line_res?;
+            if line.trim_start().starts_with("- cmd:")
+                && let Some(entry) = parse_fish_entry(line, &mut lines)
+            {
+                entries.push(entry);
             }
-            return Ok(entries);
         }
+        return Ok(entries);
     }
 
     while let Some(line_res) = lines.next() {
