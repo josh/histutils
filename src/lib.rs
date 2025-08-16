@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Read, Write};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
@@ -16,32 +17,53 @@ pub enum ShellFormat {
 }
 
 pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
+    parse_reader_inner(reader, None)
+}
+
+pub fn parse_reader_with_path<R: Read, P: AsRef<Path>>(
+    reader: R,
+    path: P,
+) -> io::Result<Vec<HistoryEntry>> {
+    parse_reader_inner(reader, Some(path.as_ref()))
+}
+
+fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec<HistoryEntry>> {
     let mut entries = Vec::new();
     let buf_reader = io::BufReader::new(reader);
     let mut lines = buf_reader.lines().peekable();
+    let mut line_no: usize = 0;
 
     if let Some(Ok(first_line)) = lines.peek()
         && first_line.trim_start().starts_with("- cmd:")
     {
         while let Some(line_res) = lines.next() {
+            line_no += 1;
             let line = line_res?;
-            if line.trim_start().starts_with("- cmd:")
-                && let Some(entry) = parse_fish_entry(line, &mut lines)
-            {
-                entries.push(entry);
+            if line.trim_start().starts_with("- cmd:") {
+                let start_line = line_no;
+                if let Some(entry) = parse_fish_entry(&line, &mut lines, &mut line_no) {
+                    entries.push(entry);
+                } else {
+                    warn_invalid(path, start_line, &line);
+                }
+            } else if !line.trim().is_empty() {
+                warn_invalid(path, line_no, &line);
             }
         }
         return Ok(entries);
     }
 
     while let Some(line_res) = lines.next() {
+        line_no += 1;
         let mut line = line_res?;
+        let start_line = line_no;
 
         while line.ends_with('\\') {
             line.pop();
             line.push('\n');
 
             if let Some(next_line_res) = lines.next() {
+                line_no += 1;
                 let next_line = next_line_res?;
                 line.push_str(&next_line);
             } else {
@@ -51,9 +73,22 @@ pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
 
         if let Some(entry) = parse_line(&line) {
             entries.push(entry);
+        } else if !line.trim().is_empty() {
+            warn_invalid(path, start_line, &line);
         }
     }
     Ok(entries)
+}
+
+fn warn_invalid(path: Option<&Path>, line_no: usize, line: &str) {
+    if let Some(p) = path {
+        eprintln!(
+            "warning: invalid history entry in {}:{line_no}: {line}",
+            p.display(),
+        );
+    } else {
+        eprintln!("warning: invalid history entry at line {line_no}: {line}");
+    }
 }
 
 fn parse_line(line: &str) -> Option<HistoryEntry> {
@@ -118,8 +153,9 @@ fn unescape_fish(s: &str) -> String {
 }
 
 fn parse_fish_entry<I>(
-    first_line: String,
+    first_line: &str,
     lines: &mut std::iter::Peekable<I>,
+    line_no: &mut usize,
 ) -> Option<HistoryEntry>
 where
     I: Iterator<Item = io::Result<String>>,
@@ -137,6 +173,7 @@ where
         }
 
         let line = lines.next().unwrap().ok()?;
+        *line_no += 1;
         let t = line.trim_start();
 
         if let Some(rest) = t.strip_prefix("when:") {
@@ -148,10 +185,12 @@ where
                 let ps = path_line.trim_start();
                 if ps.starts_with("- ") {
                     let line = lines.next().unwrap().ok()?;
+                    *line_no += 1;
                     let ps = line.trim_start();
                     paths.push(unescape_fish(&ps[2..]));
                 } else if ps.is_empty() {
                     let _ = lines.next();
+                    *line_no += 1;
                     break;
                 } else {
                     break;
