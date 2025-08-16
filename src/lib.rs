@@ -473,4 +473,52 @@ mod tests {
 
         assert_eq!(result, original);
     }
+
+    #[test]
+    fn parse_reader_ignores_invalid_and_empty() {
+        let input = ": invalid\n\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_fish_entry_handles_escapes() {
+        let input = "- cmd: first\\nsecond\\\\third\\x\n  when: 1700000000\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "first\nsecond\\third\\x");
+    }
+
+    #[test]
+    fn write_fish_escapes_special_chars() {
+        let entries = vec![HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command: "one\ntwo\\".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+        let result = String::from_utf8(output).expect("valid utf8");
+        assert_eq!(result, "- cmd: one\\ntwo\\\\\n  when: 0\n\n");
+    }
+
+    #[test]
+    fn write_bash_multiline_entry() {
+        let entries = vec![HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command: "echo hello\nworld".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
+        let result = String::from_utf8(output).expect("valid utf8");
+
+        assert_eq!(result, "echo hello\\\nworld\n");
+    }
 }
