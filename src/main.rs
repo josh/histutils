@@ -64,8 +64,8 @@ fn main() -> io::Result<()> {
     }
 
     let entries = if let Some(path) = path {
-        let f = File::open(path)?;
-        histutils::parse_reader(f)?
+        let f = File::open(&path)?;
+        histutils::parse_reader_with_path(f, &path)?
     } else {
         histutils::parse_reader(io::stdin())?
     };
