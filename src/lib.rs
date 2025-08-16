@@ -16,6 +16,7 @@ pub enum ShellFormat {
     Fish,
 }
 
+#[must_use]
 pub fn parse_format(s: &str) -> Option<ShellFormat> {
     match s {
         "sh" | "bash" => Some(ShellFormat::Sh),
@@ -28,6 +29,11 @@ fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<H
     parse_reader_inner(reader, Some(path.as_ref()))
 }
 
+/// Parses history entries from multiple readers.
+///
+/// # Errors
+///
+/// Returns an error if reading from any reader fails.
 pub fn parse_readers<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
 where
     R: Read,
@@ -294,8 +300,6 @@ where
                     break;
                 }
             }
-        } else if t.is_empty() {
-            continue;
         }
     }
 
@@ -308,6 +312,11 @@ where
     })
 }
 
+/// Writes history entries in the specified format.
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails.
 pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
@@ -431,11 +440,11 @@ mod tests {
 
         assert_eq!(entries.len(), 2);
 
-        assert_eq!(entries[0].timestamp, 1700000001);
+        assert_eq!(entries[0].timestamp, 1_700_000_001);
         assert_eq!(entries[0].duration, 0);
         assert_eq!(entries[0].command, "echo hello");
 
-        assert_eq!(entries[1].timestamp, 1700000002);
+        assert_eq!(entries[1].timestamp, 1_700_000_002);
         assert_eq!(entries[1].duration, 5);
         assert_eq!(entries[1].command, "ls -la");
     }
@@ -468,13 +477,13 @@ mod tests {
     fn write_extended_entries_zsh() {
         let entries = vec![
             HistoryEntry {
-                timestamp: 1700000001,
+                timestamp: 1_700_000_001,
                 duration: 0,
                 command: "echo hello".to_string(),
                 paths: Vec::new(),
             },
             HistoryEntry {
-                timestamp: 1700000002,
+                timestamp: 1_700_000_002,
                 duration: 5,
                 command: "ls -la".to_string(),
                 paths: Vec::new(),
@@ -491,7 +500,7 @@ mod tests {
     #[test]
     fn write_multiline_entry_zsh() {
         let entries = vec![HistoryEntry {
-            timestamp: 1700000001,
+            timestamp: 1_700_000_001,
             duration: 0,
             command: "echo hello\nworld".to_string(),
             paths: Vec::new(),
@@ -529,7 +538,7 @@ mod tests {
         let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].timestamp, 1700000000);
+        assert_eq!(entries[0].timestamp, 1_700_000_000);
         assert_eq!(entries[0].command, "cargo build");
     }
 
@@ -585,14 +594,14 @@ mod tests {
         let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].timestamp, 1516464765);
+        assert_eq!(entries[0].timestamp, 1_516_464_765);
         assert_eq!(entries[0].command, "git commit -m \"Test: something\"");
     }
 
     #[test]
     fn write_fish_entries() {
         let entries = vec![HistoryEntry {
-            timestamp: 1700000000,
+            timestamp: 1_700_000_000,
             duration: 0,
             command: "cargo build".to_string(),
             paths: vec!["~/Developer/histutils".to_string()],
