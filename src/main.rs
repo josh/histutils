@@ -1,4 +1,4 @@
-use histutils::ShellFormat;
+use histutils::{ShellFormat, detect_format};
 use std::env;
 use std::fs::File;
 use std::io::{self, Read, Seek};
@@ -67,7 +67,7 @@ fn main() -> io::Result<()> {
     }
 
     if format.is_none() {
-        let detected = histutils::detect_format(inputs.iter_mut().map(|(r, _)| r.as_mut()))?;
+        let detected = detect_format(inputs.iter_mut().map(|(r, _)| r.as_mut()))?;
         format = detected;
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");

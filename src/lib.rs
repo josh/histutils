@@ -17,8 +17,39 @@ pub enum ShellFormat {
     Fish,
 }
 
-fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
-    parse_reader_inner(reader, Some(path.as_ref()))
+/// Detects the history format of one or more readers.
+///
+/// Returns `Some(ShellFormat)` if all readers appear to be in the same
+/// format. If readers of different formats are provided or no format can be
+/// detected, `None` is returned.
+///
+/// # Errors
+///
+/// Returns any I/O error encountered while reading from the inputs.
+pub fn detect_format<'a, R, I>(readers: I) -> io::Result<Option<ShellFormat>>
+where
+    R: Read + io::Seek + 'a + ?Sized,
+    I: Iterator<Item = &'a mut R>,
+{
+    let mut detected: Option<ShellFormat> = None;
+    for reader in readers {
+        let mut buf_reader = io::BufReader::new(reader);
+        let mut line = Vec::new();
+        let bytes = buf_reader.read_until(b'\n', &mut line)?;
+        buf_reader.into_inner().seek(io::SeekFrom::Start(0))?;
+        if bytes == 0 {
+            continue;
+        }
+        let fmt = detect_format_line(&line);
+        if let Some(existing) = detected {
+            if existing != fmt {
+                return Ok(None);
+            }
+        } else {
+            detected = Some(fmt);
+        }
+    }
+    Ok(detected)
 }
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
@@ -91,41 +122,6 @@ where
     } else {
         ShellFormat::Sh
     }
-}
-
-/// Detects the format of one or more readers.
-///
-/// Returns `Some(ShellFormat)` if all readers appear to be in the same
-/// format. If readers of different formats are provided or no format can be
-/// detected, `None` is returned.
-///
-/// # Errors
-///
-/// Returns any I/O error encountered while reading from the inputs.
-pub fn detect_format<'a, R, I>(readers: I) -> io::Result<Option<ShellFormat>>
-where
-    R: Read + io::Seek + 'a + ?Sized,
-    I: Iterator<Item = &'a mut R>,
-{
-    let mut detected: Option<ShellFormat> = None;
-    for reader in readers {
-        let mut buf_reader = io::BufReader::new(reader);
-        let mut line = Vec::new();
-        let bytes = buf_reader.read_until(b'\n', &mut line)?;
-        buf_reader.into_inner().seek(io::SeekFrom::Start(0))?;
-        if bytes == 0 {
-            continue;
-        }
-        let fmt = detect_format_line(&line);
-        if let Some(existing) = detected {
-            if existing != fmt {
-                return Ok(None);
-            }
-        } else {
-            detected = Some(fmt);
-        }
-    }
-    Ok(detected)
 }
 
 fn parse_sh_format<I>(
@@ -286,14 +282,15 @@ impl<R: BufRead> Iterator for ByteLines<R> {
     }
 }
 
-fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec<HistoryEntry>> {
+fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
     let buf_reader = io::BufReader::new(reader);
     let mut lines = ByteLines::new(buf_reader).peekable();
+    let path = path.as_ref();
 
     match detect_format_from_lines(&mut lines) {
-        ShellFormat::Fish => parse_fish_format(&mut lines, path),
-        ShellFormat::ZshExtended => parse_zsh_extended_format(&mut lines, path),
-        ShellFormat::Sh => parse_sh_format(&mut lines, path),
+        ShellFormat::Fish => parse_fish_format(&mut lines, Some(path)),
+        ShellFormat::ZshExtended => parse_zsh_extended_format(&mut lines, Some(path)),
+        ShellFormat::Sh => parse_sh_format(&mut lines, Some(path)),
     }
 }
 
@@ -624,6 +621,76 @@ fn escape_fish(s: &str) -> String {
 mod tests {
     use super::*;
     use std::io::{self, Cursor};
+
+    #[test]
+    fn detect_format_none() {
+        let mut readers: Vec<std::io::Cursor<&[u8]>> = Vec::new();
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, None);
+    }
+
+    #[test]
+    fn detect_format_one_sh() {
+        let reader = Cursor::new("echo hello\n");
+        let mut readers = [reader];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::Sh));
+    }
+
+    #[test]
+    fn detect_format_one_zsh() {
+        let reader = Cursor::new(": 1:0;echo hello\n");
+        let mut readers = [reader];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::ZshExtended));
+    }
+
+    #[test]
+    fn detect_format_one_fish() {
+        let reader = Cursor::new("- cmd: echo hello\n  when: 1\n");
+        let mut readers = [reader];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::Fish));
+    }
+
+    #[test]
+    fn detect_format_multiple_sh() {
+        let r1 = Cursor::new("echo foo\n");
+        let r2 = Cursor::new("echo bar\n");
+        let r3 = Cursor::new("echo baz\n");
+        let mut readers = [r1, r2, r3];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::Sh));
+    }
+
+    #[test]
+    fn detect_format_multiple_zsh() {
+        let r1 = Cursor::new(": 1:0;echo foo\n");
+        let r2 = Cursor::new(": 2:0;echo bar\n");
+        let r3 = Cursor::new(": 3:0;echo baz\n");
+        let mut readers = [r1, r2, r3];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::ZshExtended));
+    }
+
+    #[test]
+    fn detect_format_multiple_fish() {
+        let r1 = Cursor::new("- cmd: echo foo\n  when: 1\n");
+        let r2 = Cursor::new("- cmd: echo bar\n  when: 2\n");
+        let r3 = Cursor::new("- cmd: echo baz\n  when: 3\n");
+        let mut readers = [r1, r2, r3];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, Some(ShellFormat::Fish));
+    }
+
+    #[test]
+    fn detect_format_mixed() {
+        let zsh = Cursor::new(": 1:0;echo foo\n");
+        let fish = Cursor::new("- cmd: echo bar\n  when: 2\n");
+        let mut readers = [zsh, fish];
+        let fmt = detect_format(readers.iter_mut()).unwrap();
+        assert_eq!(fmt, None);
+    }
 
     #[test]
     fn parse_simple_entry() {
@@ -1068,23 +1135,5 @@ mod tests {
         let result = String::from_utf8(output).expect("valid utf8");
 
         assert_eq!(result, "echo hello\\\nworld\n");
-    }
-
-    #[test]
-    fn detect_format_all_same() {
-        let r1 = Cursor::new(": 1:0;one\n");
-        let r2 = Cursor::new(": 2:0;two\n");
-        let mut readers = [r1, r2];
-        let fmt = detect_format(readers.iter_mut()).expect("should detect");
-        assert_eq!(fmt, Some(ShellFormat::ZshExtended));
-    }
-
-    #[test]
-    fn detect_format_mixed() {
-        let zsh = Cursor::new(": 1:0;one\n");
-        let fish = Cursor::new("- cmd: two\n  when: 2\n");
-        let mut readers = [zsh, fish];
-        let fmt = detect_format(readers.iter_mut()).expect("should detect");
-        assert_eq!(fmt, None);
     }
 }
