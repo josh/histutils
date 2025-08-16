@@ -1,4 +1,4 @@
-use histutils::{ShellFormat, detect_format, parse_entries, write_entries};
+use histutils::{HistoryFile, ShellFormat, detect_format, parse_entries, write_entries};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek};
@@ -67,7 +67,11 @@ fn main() -> io::Result<()> {
     }
 
     if format.is_none() {
-        let detected = detect_format(inputs.iter_mut().map(|(r, _)| r.as_mut()))?;
+        let history_files = inputs.iter_mut().map(|(r, p)| HistoryFile {
+            reader: r.as_mut(),
+            path: Some(std::path::PathBuf::from(p.clone())),
+        });
+        let detected = detect_format(history_files)?;
         format = detected;
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");
@@ -75,7 +79,11 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let entries = parse_entries(inputs.into_iter())?;
+    let history_files = inputs.into_iter().map(|(reader, path)| HistoryFile {
+        reader,
+        path: Some(std::path::PathBuf::from(path)),
+    });
+    let entries = parse_entries(history_files)?;
 
     if count {
         println!("{}", entries.len());
