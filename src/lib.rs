@@ -462,6 +462,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_fish_entry_paths_then_new_entry() {
+        let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n- cmd: echo hi\n  when: 1700000001\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].paths, vec!["~/project1".to_string()]);
+        assert_eq!(entries[1].command, "echo hi");
+    }
+
+    #[test]
     fn parse_fish_multiline_command() {
         let input = "- cmd: echo \"hello\\nmultiline\\nstring\"\n  when: 1700000000\n";
         let reader = Cursor::new(input);
