@@ -484,7 +484,8 @@ fn parse_zsh_extended_line_bytes(
         Err(_) => return Ok(None),
     };
 
-    let (command, invalid) = decode_lossy(cmd_bytes);
+    let (command_raw, invalid) = decode_lossy(cmd_bytes);
+    let command = unescape_command(&command_raw);
 
     Ok(Some((
         HistoryEntry {
@@ -502,7 +503,8 @@ fn parse_sh_line_bytes(line: &[u8]) -> Option<(HistoryEntry, bool)> {
     if s.is_empty() || s.starts_with(b":") {
         return None;
     }
-    let (command, invalid) = decode_lossy(s);
+    let (command_raw, invalid) = decode_lossy(s);
+    let command = unescape_command(&command_raw);
     Some((
         HistoryEntry {
             timestamp: 0,
@@ -689,7 +691,32 @@ fn escape_command(s: &str) -> String {
     for ch in s.chars() {
         match ch {
             '\n' => out.push_str("\\\n"),
+            '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn unescape_command(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    'n' => out.push('\n'),
+                    '\\' => out.push('\\'),
+                    other => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                }
+            } else {
+                out.push('\\');
+            }
+        } else {
+            out.push(ch);
         }
     }
     out
@@ -804,36 +831,6 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_sh_backslash() {
-        let original = "echo foo \\ hello\n";
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].command, r"echo foo \ hello");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn roundtrip_sh_multiline() {
-        let original = "echo foo\\\nbar\\\nbaz\n";
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, original);
-    }
-
-    #[test]
     fn parse_extended_entries() {
         let input: HistoryFile<_> = ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n".into();
         let entries = parse_entries([input]).expect("should parse");
@@ -847,103 +844,6 @@ mod tests {
         assert_eq!(entries[1].timestamp, 1_700_000_002);
         assert_eq!(entries[1].duration, 5);
         assert_eq!(entries[1].command, "ls -la");
-    }
-
-    #[test]
-    fn write_simple_entries_bash() {
-        let entries = vec![
-            HistoryEntry {
-                timestamp: 0,
-                duration: 0,
-                command: "echo hello".to_string(),
-                paths: Vec::new(),
-            },
-            HistoryEntry {
-                timestamp: 0,
-                duration: 0,
-                command: "ls -la".to_string(),
-                paths: Vec::new(),
-            },
-        ];
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
-
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, "echo hello\nls -la\n");
-    }
-
-    #[test]
-    fn write_extended_entries_zsh() {
-        let entries = vec![
-            HistoryEntry {
-                timestamp: 1_700_000_001,
-                duration: 0,
-                command: "echo hello".to_string(),
-                paths: Vec::new(),
-            },
-            HistoryEntry {
-                timestamp: 1_700_000_002,
-                duration: 5,
-                command: "ls -la".to_string(),
-                paths: Vec::new(),
-            },
-        ];
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
-
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n");
-    }
-
-    #[test]
-    fn write_multiline_entry_zsh() {
-        let entries = vec![HistoryEntry {
-            timestamp: 1_700_000_001,
-            duration: 0,
-            command: "echo hello\nworld".to_string(),
-            paths: Vec::new(),
-        }];
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
-
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, ": 1700000001:0;echo hello\\\nworld\n");
-    }
-
-    #[test]
-    fn roundtrip_zsh_multiline() {
-        let original = ": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
-
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].command, "echo hello\nworld");
-        assert_eq!(entries[1].command, "ls -la");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn roundtrip_zsh_colon_continuation() {
-        let original = ": 100:0;echo foo\\\n: 200:0;echo bar\n";
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].timestamp, 100);
-        assert_eq!(entries[0].command, "echo foo\n: 200:0;echo bar");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::ZshExtended).expect("should write");
-        let result = String::from_utf8(output).expect("should be valid utf8");
-        assert_eq!(result, original);
     }
 
     #[test]
@@ -1008,51 +908,6 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1_516_464_765);
         assert_eq!(entries[0].command, "git commit -m \"Test: something\"");
-    }
-
-    #[test]
-    fn write_fish_entries() {
-        let entries = vec![HistoryEntry {
-            timestamp: 1_700_000_000,
-            duration: 0,
-            command: "cargo build".to_string(),
-            paths: vec!["~/Developer/histutils".to_string()],
-        }];
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
-
-        let result = String::from_utf8(output).expect("valid utf8");
-        let expected =
-            "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n";
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn roundtrip_fish_multiline() {
-        let original =
-            "- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
-        let result = String::from_utf8(output).expect("valid utf8");
-
-        assert_eq!(result, original);
-    }
-
-    #[test]
-    fn roundtrip_fish_with_paths() {
-        let original = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
-        let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).expect("should parse");
-
-        let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
-        let result = String::from_utf8(output).expect("valid utf8");
-
-        assert_eq!(result, original);
     }
 
     #[test]
@@ -1174,22 +1029,194 @@ mod tests {
     }
 
     #[test]
-    fn write_fish_escapes_special_chars() {
+    fn write_sh_single_entry() {
         let entries = vec![HistoryEntry {
             timestamp: 0,
             duration: 0,
-            command: "one\ntwo\\".to_string(),
+            command: "echo hello".to_string(),
             paths: Vec::new(),
         }];
 
         let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
-        let result = String::from_utf8(output).expect("valid utf8");
-        assert_eq!(result, "- cmd: one\\ntwo\\\\\n  when: 0\n");
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, b"echo hello\n");
     }
 
     #[test]
-    fn write_bash_multiline_entry() {
+    fn write_zsh_single_entry() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, b": 1:0;echo hello\n");
+    }
+
+    #[test]
+    fn write_fish_single_entry() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(output, b"- cmd: echo hello\n  when: 1\n");
+    }
+
+    #[test]
+    fn write_sh_multiple_entries() {
+        let entries = vec![
+            HistoryEntry {
+                timestamp: 0,
+                duration: 0,
+                command: "echo foo".to_string(),
+                paths: Vec::new(),
+            },
+            HistoryEntry {
+                timestamp: 0,
+                duration: 0,
+                command: "echo bar".to_string(),
+                paths: Vec::new(),
+            },
+        ];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, b"echo foo\necho bar\n");
+    }
+
+    #[test]
+    fn write_zsh_multiple_entries() {
+        let entries = vec![
+            HistoryEntry {
+                timestamp: 1,
+                duration: 0,
+                command: "echo foo".to_string(),
+                paths: Vec::new(),
+            },
+            HistoryEntry {
+                timestamp: 2,
+                duration: 0,
+                command: "echo bar".to_string(),
+                paths: Vec::new(),
+            },
+        ];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, b": 1:0;echo foo\n: 2:0;echo bar\n");
+    }
+
+    #[test]
+    fn write_fish_multiple_entries() {
+        let entries = vec![
+            HistoryEntry {
+                timestamp: 1,
+                duration: 0,
+                command: "echo foo".to_string(),
+                paths: Vec::new(),
+            },
+            HistoryEntry {
+                timestamp: 2,
+                duration: 0,
+                command: "echo bar".to_string(),
+                paths: Vec::new(),
+            },
+        ];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(
+            output,
+            b"- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n"
+        );
+    }
+
+    #[test]
+    fn write_fish_path() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1_700_000_000,
+            duration: 100,
+            command: "cargo build".to_string(),
+            paths: vec!["~/Developer/histutils".to_string()],
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+        assert_eq!(
+            output,
+            b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n"
+        );
+    }
+
+    #[test]
+    fn write_fish_paths() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1_700_000_000,
+            duration: 100,
+            command: "cargo build".to_string(),
+            paths: vec!["~/Developer/histutils".to_string(), "/tmp".to_string()],
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+        assert_eq!(
+            output,
+            b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n    - /tmp\n"
+        );
+    }
+
+    #[test]
+    fn write_sh_escape_backslash() {
+        let entries = vec![HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command: "echo hello \\ world".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, b"echo hello \\\\ world\n");
+    }
+
+    #[test]
+    fn write_zsh_escape_backslash() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello \\ world".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, b": 1:0;echo hello \\\\ world\n");
+    }
+
+    #[test]
+    fn write_fish_escape_backslash() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello \\ world".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(output, b"- cmd: echo hello \\\\ world\n  when: 1\n");
+    }
+
+    #[test]
+    fn write_sh_escape_newline() {
         let entries = vec![HistoryEntry {
             timestamp: 0,
             duration: 0,
@@ -1198,9 +1225,117 @@ mod tests {
         }];
 
         let mut output = Vec::new();
-        write_entries(&mut output, entries, ShellFormat::Sh).expect("should write");
-        let result = String::from_utf8(output).expect("valid utf8");
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, b"echo hello\\\nworld\n");
+    }
 
-        assert_eq!(result, "echo hello\\\nworld\n");
+    #[test]
+    fn write_zsh_escape_newline() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello\nworld".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, b": 1:0;echo hello\\\nworld\n");
+    }
+
+    #[test]
+    fn write_fish_escape_newline() {
+        let entries = vec![HistoryEntry {
+            timestamp: 1,
+            duration: 0,
+            command: "echo hello\nworld".to_string(),
+            paths: Vec::new(),
+        }];
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(output, b"- cmd: echo hello\\nworld\n  when: 1\n");
+    }
+
+    #[test]
+    fn roundtrip_sh_backslash() {
+        let original = b"echo foo \\\\ hello\n";
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "echo foo \\ hello");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, original);
+    }
+
+    #[test]
+    fn roundtrip_sh_multiline() {
+        let original = b"echo foo\\\nbar\\\nbaz\n";
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+        assert_eq!(output, original);
+    }
+
+    #[test]
+    fn roundtrip_zsh_multiline() {
+        let original = b": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
+
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].command, "echo hello\nworld");
+        assert_eq!(entries[1].command, "ls -la");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, original);
+    }
+
+    #[test]
+    fn roundtrip_zsh_colon_continuation() {
+        let original = b": 100:0;echo foo\\\n: 200:0;echo bar\n";
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].timestamp, 100);
+        assert_eq!(entries[0].command, "echo foo\n: 200:0;echo bar");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+        assert_eq!(output, original);
+    }
+
+    #[test]
+    fn roundtrip_fish_multiline() {
+        let original =
+            b"- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(output, original);
+    }
+
+    #[test]
+    fn roundtrip_fish_with_paths() {
+        let original = b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
+        let input: HistoryFile<_> = original.into();
+        let entries = parse_entries([input]).unwrap();
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
+        assert_eq!(output, original);
     }
 }
