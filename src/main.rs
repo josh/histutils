@@ -54,24 +54,30 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let mut inputs: Vec<(Box<dyn ReadSeek>, String)> = Vec::new();
     if paths.is_empty() {
-        let mut buf = Vec::new();
-        io::stdin().read_to_end(&mut buf)?;
-        inputs.push((Box::new(io::Cursor::new(buf)), "-".to_string()));
-    } else {
-        for p in paths {
+        paths.push("-".to_string());
+    }
+
+    let mut history_files: Vec<HistoryFile<Box<dyn ReadSeek>>> = Vec::new();
+    for p in paths {
+        if p == "-" {
+            let mut buf = Vec::new();
+            io::stdin().read_to_end(&mut buf)?;
+            history_files.push(HistoryFile {
+                reader: Box::new(io::Cursor::new(buf)),
+                path: Some(std::path::PathBuf::from("-")),
+            });
+        } else {
             let f = File::open(&p)?;
-            inputs.push((Box::new(BufReader::new(f)), p));
+            history_files.push(HistoryFile {
+                reader: Box::new(BufReader::new(f)),
+                path: Some(std::path::PathBuf::from(p)),
+            });
         }
     }
 
     if format.is_none() {
-        let history_files = inputs.iter_mut().map(|(r, p)| HistoryFile {
-            reader: r.as_mut(),
-            path: Some(std::path::PathBuf::from(p.clone())),
-        });
-        let detected = detect_format(history_files)?;
+        let detected = detect_format(history_files.iter_mut())?;
         format = detected;
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");
@@ -79,10 +85,6 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let history_files = inputs.into_iter().map(|(reader, path)| HistoryFile {
-        reader,
-        path: Some(std::path::PathBuf::from(path)),
-    });
     let entries = parse_entries(history_files)?;
 
     if count {

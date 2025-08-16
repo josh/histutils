@@ -78,23 +78,22 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<std::io::Cursor<&'a [
 /// # Examples
 ///
 /// ```
-/// let h1: histutils::HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-/// let h2: histutils::HistoryFile<_> = ": 1234567891:0;ls -la\n".into();
-/// let readers = [h1, h2];
-/// let format = histutils::detect_format(readers.into_iter()).unwrap();
+/// let mut h1: histutils::HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
+/// let mut h2: histutils::HistoryFile<_> = ": 1234567891:0;ls -la\n".into();
+/// let format = histutils::detect_format([&mut h1, &mut h2].into_iter()).unwrap();
 /// assert_eq!(format, Some(histutils::ShellFormat::ZshExtended));
 /// ```
 ///
 /// # Errors
 ///
 /// Returns any I/O error encountered while reading from the inputs.
-pub fn detect_format<R, I>(readers: I) -> io::Result<Option<ShellFormat>>
+pub fn detect_format<'a, R, I>(readers: I) -> io::Result<Option<ShellFormat>>
 where
-    R: BufRead + Seek,
-    I: Iterator<Item = HistoryFile<R>>,
+    R: BufRead + Seek + 'a,
+    I: Iterator<Item = &'a mut HistoryFile<R>>,
 {
     let mut detected: Option<ShellFormat> = None;
-    for mut history_file in readers {
+    for history_file in readers {
         let mut line = Vec::new();
         let bytes = history_file.reader.read_until(b'\n', &mut line)?;
         history_file.reader.seek(io::SeekFrom::Start(0))?;
@@ -702,71 +701,64 @@ mod tests {
 
     #[test]
     fn detect_format_none() {
-        let readers: Vec<HistoryFile<std::io::Cursor<&[u8]>>> = Vec::new();
+        let readers: Vec<&mut HistoryFile<std::io::Cursor<&[u8]>>> = Vec::new();
         let fmt = detect_format(readers.into_iter()).unwrap();
         assert_eq!(fmt, None);
     }
 
     #[test]
     fn detect_format_one_sh() {
-        let input: HistoryFile<_> = "echo hello\n".into();
-        let readers = [input];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut history_file: HistoryFile<_> = "echo hello\n".into();
+        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Sh));
     }
 
     #[test]
     fn detect_format_one_zsh() {
-        let input: HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-        let readers = [input];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut history_file: HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
+        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::ZshExtended));
     }
 
     #[test]
     fn detect_format_one_fish() {
-        let input: HistoryFile<_> = "- cmd: echo hello\n  when: 1234567890\n".into();
-        let readers = [input];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut history_file: HistoryFile<_> = "- cmd: echo hello\n  when: 1234567890\n".into();
+        let fmt = detect_format([&mut history_file].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Fish));
     }
 
     #[test]
     fn detect_format_multiple_sh() {
-        let h1: HistoryFile<_> = "echo foo\n".into();
-        let h2: HistoryFile<_> = "echo bar\n".into();
-        let h3: HistoryFile<_> = "echo baz\n".into();
-        let readers = [h1, h2, h3];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut h1: HistoryFile<_> = "echo foo\n".into();
+        let mut h2: HistoryFile<_> = "echo bar\n".into();
+        let mut h3: HistoryFile<_> = "echo baz\n".into();
+        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Sh));
     }
 
     #[test]
     fn detect_format_multiple_zsh() {
-        let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
-        let h2: HistoryFile<_> = ": 1234567892:0;echo bar\n".into();
-        let h3: HistoryFile<_> = ": 1234567893:0;echo baz\n".into();
-        let readers = [h1, h2, h3];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
+        let mut h2: HistoryFile<_> = ": 1234567892:0;echo bar\n".into();
+        let mut h3: HistoryFile<_> = ": 1234567893:0;echo baz\n".into();
+        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::ZshExtended));
     }
 
     #[test]
     fn detect_format_multiple_fish() {
-        let h1: HistoryFile<_> = "- cmd: echo foo\n  when: 1234567891\n".into();
-        let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
-        let h3: HistoryFile<_> = "- cmd: echo baz\n  when: 1234567893\n".into();
-        let readers = [h1, h2, h3];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut h1: HistoryFile<_> = "- cmd: echo foo\n  when: 1234567891\n".into();
+        let mut h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
+        let mut h3: HistoryFile<_> = "- cmd: echo baz\n  when: 1234567893\n".into();
+        let fmt = detect_format([&mut h1, &mut h2, &mut h3].into_iter()).unwrap();
         assert_eq!(fmt, Some(ShellFormat::Fish));
     }
 
     #[test]
     fn detect_format_mixed() {
-        let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
-        let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
-        let readers = [h1, h2];
-        let fmt = detect_format(readers.into_iter()).unwrap();
+        let mut h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
+        let mut h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
+        let fmt = detect_format([&mut h1, &mut h2].into_iter()).unwrap();
         assert_eq!(fmt, None);
     }
 
