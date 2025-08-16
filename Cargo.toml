@@ -2,6 +2,7 @@
 name = "histutils"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.86"
 description = "Import, export or merge zsh or fish history files."
 license = "MIT"
 readme = "README.md"
