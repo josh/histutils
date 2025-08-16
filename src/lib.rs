@@ -4,8 +4,8 @@ use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HistoryEntry {
-    pub timestamp: i64,
-    pub duration: i64,
+    pub timestamp: u64,
+    pub duration: u64,
     pub command: String,
     pub paths: Vec<String>,
 }
@@ -61,7 +61,7 @@ where
     P: AsRef<Path>,
     I: IntoIterator<Item = (R, P)>,
 {
-    let mut map: BTreeMap<i64, Vec<HistoryEntry>> = BTreeMap::new();
+    let mut map: BTreeMap<u64, Vec<HistoryEntry>> = BTreeMap::new();
     for (reader, path) in readers {
         for entry in parse_reader(reader, path)? {
             let entries = map.entry(entry.timestamp).or_default();
@@ -397,11 +397,11 @@ fn parse_zsh_extended_line_bytes(
 
     let ts_str = std::str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
     let dur_str = std::str::from_utf8(dur_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
-    let timestamp: i64 = match ts_str.parse() {
+    let timestamp: u64 = match ts_str.parse() {
         Ok(t) => t,
         Err(_) => return Ok(None),
     };
-    let duration: i64 = match dur_str.parse() {
+    let duration: u64 = match dur_str.parse() {
         Ok(d) => d,
         Err(_) => return Ok(None),
     };
@@ -480,7 +480,7 @@ where
         warn_lossy_utf8(path, start_line, "command", first_line);
     }
     let command = unescape_fish(&cmd_raw);
-    let mut timestamp: Option<i64> = None;
+    let mut timestamp: Option<u64> = None;
     let mut paths: Vec<String> = Vec::new();
 
     while let Some(peek_res) = lines.peek() {
