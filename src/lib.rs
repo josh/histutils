@@ -82,13 +82,13 @@ where
 
 fn detect_format<I>(lines: &mut std::iter::Peekable<I>) -> ShellFormat
 where
-    I: Iterator<Item = io::Result<String>>,
+    I: Iterator<Item = io::Result<Vec<u8>>>,
 {
     if let Some(Ok(first_line)) = lines.peek() {
-        let first_line = first_line.trim_start();
-        if first_line.starts_with("- cmd:") {
+        let first_line = trim_start(first_line);
+        if first_line.starts_with(b"- cmd:") {
             ShellFormat::Fish
-        } else if first_line.starts_with(':') {
+        } else if first_line.starts_with(b":") {
             ShellFormat::ZshExtended
         } else {
             ShellFormat::Sh
@@ -103,7 +103,7 @@ fn parse_sh_format<I>(
     path: Option<&Path>,
 ) -> io::Result<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<String>>,
+    I: Iterator<Item = io::Result<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -113,23 +113,28 @@ where
         let mut line = line_res?;
         let start_line = line_no;
 
-        while line.ends_with('\\') {
+        while line.ends_with(b"\\") {
             line.pop();
-            line.push('\n');
+            line.push(b'\n');
 
             if let Some(next_line_res) = lines.next() {
                 line_no += 1;
                 let next_line = next_line_res?;
-                line.push_str(&next_line);
+                line.extend_from_slice(&next_line);
             } else {
                 break;
             }
         }
 
-        if let Some(entry) = parse_sh_line(&line) {
-            entries.push(entry);
-        } else if !line.trim().is_empty() {
-            warn_invalid(path, start_line, &line);
+        match parse_sh_line_bytes(&line) {
+            Some((entry, invalid)) => {
+                if invalid {
+                    warn_lossy_utf8(path, start_line, "command", &line);
+                }
+                entries.push(entry);
+            }
+            None if !trim_start(&line).is_empty() => warn_invalid(path, start_line, &line),
+            None => {}
         }
     }
 
@@ -141,7 +146,7 @@ fn parse_zsh_extended_format<I>(
     path: Option<&Path>,
 ) -> io::Result<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<String>>,
+    I: Iterator<Item = io::Result<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -151,23 +156,34 @@ where
         let mut line = line_res?;
         let start_line = line_no;
 
-        while line.ends_with('\\') {
+        while line.ends_with(b"\\") {
             line.pop();
-            line.push('\n');
+            line.push(b'\n');
 
             if let Some(next_line_res) = lines.next() {
                 line_no += 1;
                 let next_line = next_line_res?;
-                line.push_str(&next_line);
+                line.extend_from_slice(&next_line);
             } else {
                 break;
             }
         }
 
-        if let Some(entry) = parse_zsh_extended_line(&line) {
-            entries.push(entry);
-        } else if !line.trim().is_empty() {
-            warn_invalid(path, start_line, &line);
+        match parse_zsh_extended_line_bytes(&line) {
+            Ok(Some((entry, invalid))) => {
+                if invalid {
+                    warn_lossy_utf8(path, start_line, "command", &line);
+                }
+                entries.push(entry);
+            }
+            Ok(None) => {
+                if !trim_start(&line).is_empty() {
+                    warn_invalid(path, start_line, &line);
+                }
+            }
+            Err(LineParseError::InvalidUtf8) => {
+                return Err(invalid_utf8_error(path, start_line));
+            }
         }
     }
 
@@ -179,7 +195,7 @@ fn parse_fish_format<I>(
     path: Option<&Path>,
 ) -> io::Result<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<String>>,
+    I: Iterator<Item = io::Result<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -187,14 +203,17 @@ where
     while let Some(line_res) = lines.next() {
         line_no += 1;
         let line = line_res?;
-        if line.trim_start().starts_with("- cmd:") {
+        let t = trim_start(&line);
+        if t.starts_with(b"- cmd:") {
             let start_line = line_no;
-            if let Some(entry) = parse_fish_entry(&line, lines, &mut line_no) {
-                entries.push(entry);
-            } else {
-                warn_invalid(path, start_line, &line);
+            match parse_fish_entry_bytes(&line, lines, &mut line_no, path, start_line) {
+                Ok(Some(entry)) => entries.push(entry),
+                Ok(None) => warn_invalid(path, start_line, &line),
+                Err(LineParseError::InvalidUtf8) => {
+                    return Err(invalid_utf8_error(path, start_line));
+                }
             }
-        } else if !line.trim().is_empty() {
+        } else if !t.is_empty() {
             warn_invalid(path, line_no, &line);
         }
     }
@@ -202,9 +221,44 @@ where
     Ok(entries)
 }
 
+struct ByteLines<R: BufRead> {
+    reader: R,
+    buf: Vec<u8>,
+}
+
+impl<R: BufRead> ByteLines<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader,
+            buf: Vec::new(),
+        }
+    }
+}
+
+impl<R: BufRead> Iterator for ByteLines<R> {
+    type Item = io::Result<Vec<u8>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.buf.clear();
+        match self.reader.read_until(b'\n', &mut self.buf) {
+            Ok(0) => None,
+            Ok(_) => {
+                if self.buf.ends_with(b"\n") {
+                    self.buf.pop();
+                    if self.buf.ends_with(b"\r") {
+                        self.buf.pop();
+                    }
+                }
+                Some(Ok(self.buf.clone()))
+            }
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
 fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec<HistoryEntry>> {
     let buf_reader = io::BufReader::new(reader);
-    let mut lines = buf_reader.lines().peekable();
+    let mut lines = ByteLines::new(buf_reader).peekable();
 
     match detect_format(&mut lines) {
         ShellFormat::Fish => parse_fish_format(&mut lines, path),
@@ -213,53 +267,134 @@ fn parse_reader_inner<R: Read>(reader: R, path: Option<&Path>) -> io::Result<Vec
     }
 }
 
-fn warn_invalid(path: Option<&Path>, line_no: usize, line: &str) {
+fn warn_invalid(path: Option<&Path>, line_no: usize, line: &[u8]) {
+    let display = String::from_utf8_lossy(line);
     if let Some(p) = path {
         eprintln!(
-            "warning: invalid history entry in {}:{line_no}: {line}",
+            "warning: invalid history entry in {}:{line_no}: {display}",
             p.display(),
         );
     } else {
-        eprintln!("warning: invalid history entry at line {line_no}: {line}");
+        eprintln!("warning: invalid history entry at line {line_no}: {display}");
     }
 }
 
-fn parse_zsh_extended_line(line: &str) -> Option<HistoryEntry> {
-    let s = line.trim_start();
-    let mut rest = s.strip_prefix(':')?.trim_start();
-
-    let idx_colon = rest.find(':')?;
-    let ts_str = &rest[..idx_colon];
-    rest = &rest[idx_colon + 1..];
-
-    let idx_sc = rest.find(';')?;
-    let dur_str = &rest[..idx_sc];
-    let cmd_str = &rest[idx_sc + 1..];
-
-    let timestamp: i64 = ts_str.parse().ok()?;
-    let duration: i64 = dur_str.parse().ok()?;
-    let command = cmd_str.to_string();
-
-    Some(HistoryEntry {
-        timestamp,
-        duration,
-        command,
-        paths: Vec::new(),
-    })
+fn warn_lossy_utf8(path: Option<&Path>, line_no: usize, what: &str, line: &[u8]) {
+    let display = String::from_utf8_lossy(line);
+    if let Some(p) = path {
+        println!(
+            "warning: invalid UTF-8 in {what} in {}:{line_no}: {display}",
+            p.display(),
+        );
+    } else {
+        println!("warning: invalid UTF-8 in {what} at line {line_no}: {display}");
+    }
 }
 
-fn parse_sh_line(line: &str) -> Option<HistoryEntry> {
-    let s = line.trim_start();
-    if s.is_empty() || s.starts_with(':') {
+fn invalid_utf8_error(path: Option<&Path>, line_no: usize) -> io::Error {
+    if let Some(p) = path {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid UTF-8 in metadata in {}:{line_no}", p.display()),
+        )
+    } else {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid UTF-8 in metadata at line {line_no}"),
+        )
+    }
+}
+
+enum LineParseError {
+    InvalidUtf8,
+}
+
+fn trim_start(mut s: &[u8]) -> &[u8] {
+    while let Some((&b, rest)) = s.split_first() {
+        if b == b' ' || b == b'\t' {
+            s = rest;
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+fn strip_prefix<'a>(s: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
+    if s.starts_with(prefix) {
+        Some(&s[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+fn decode_lossy(bytes: &[u8]) -> (String, bool) {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => (s.to_string(), false),
+        Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
+    }
+}
+
+fn parse_zsh_extended_line_bytes(
+    line: &[u8],
+) -> Result<Option<(HistoryEntry, bool)>, LineParseError> {
+    let s = trim_start(line);
+    if !s.starts_with(b":") {
+        return Ok(None);
+    }
+    let rest = trim_start(&s[1..]);
+
+    let Some(idx_colon) = rest.iter().position(|&b| b == b':') else {
+        return Ok(None);
+    };
+    let ts_bytes = &rest[..idx_colon];
+    let rest = &rest[idx_colon + 1..];
+
+    let Some(idx_sc) = rest.iter().position(|&b| b == b';') else {
+        return Ok(None);
+    };
+    let dur_bytes = &rest[..idx_sc];
+    let cmd_bytes = &rest[idx_sc + 1..];
+
+    let ts_str = std::str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+    let dur_str = std::str::from_utf8(dur_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+    let timestamp: i64 = match ts_str.parse() {
+        Ok(t) => t,
+        Err(_) => return Ok(None),
+    };
+    let duration: i64 = match dur_str.parse() {
+        Ok(d) => d,
+        Err(_) => return Ok(None),
+    };
+
+    let (command, invalid) = decode_lossy(cmd_bytes);
+
+    Ok(Some((
+        HistoryEntry {
+            timestamp,
+            duration,
+            command,
+            paths: Vec::new(),
+        },
+        invalid,
+    )))
+}
+
+fn parse_sh_line_bytes(line: &[u8]) -> Option<(HistoryEntry, bool)> {
+    let s = trim_start(line);
+    if s.is_empty() || s.starts_with(b":") {
         return None;
     }
-
-    Some(HistoryEntry {
-        timestamp: 0,
-        duration: 0,
-        command: s.to_string(),
-        paths: Vec::new(),
-    })
+    let (command, invalid) = decode_lossy(s);
+    Some((
+        HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command,
+            paths: Vec::new(),
+        },
+        invalid,
+    ))
 }
 
 fn unescape_fish(s: &str) -> String {
@@ -286,44 +421,69 @@ fn unescape_fish(s: &str) -> String {
     out
 }
 
-fn parse_fish_entry<I>(
-    first_line: &str,
+fn parse_fish_entry_bytes<I>(
+    first_line: &[u8],
     lines: &mut std::iter::Peekable<I>,
     line_no: &mut usize,
-) -> Option<HistoryEntry>
+    path: Option<&Path>,
+    start_line: usize,
+) -> Result<Option<HistoryEntry>, LineParseError>
 where
-    I: Iterator<Item = io::Result<String>>,
+    I: Iterator<Item = io::Result<Vec<u8>>>,
 {
-    let command_raw = first_line.trim_start().strip_prefix("- cmd:")?.trim_start();
-    let command = unescape_fish(command_raw);
+    let t = trim_start(first_line);
+    let Some(cmd_bytes) = strip_prefix(t, b"- cmd:") else {
+        return Ok(None);
+    };
+    let cmd_bytes = trim_start(cmd_bytes);
+    let (cmd_raw, invalid_cmd) = decode_lossy(cmd_bytes);
+    if invalid_cmd {
+        warn_lossy_utf8(path, start_line, "command", first_line);
+    }
+    let command = unescape_fish(&cmd_raw);
     let mut timestamp: Option<i64> = None;
     let mut paths: Vec<String> = Vec::new();
 
     while let Some(peek_res) = lines.peek() {
-        let peek_line = peek_res.as_ref().ok()?;
-        let t = peek_line.trim_start();
-        if t.starts_with("- cmd:") {
+        let peek_line = peek_res.as_ref().map_err(|_| LineParseError::InvalidUtf8)?;
+        let t = trim_start(peek_line);
+        if t.starts_with(b"- cmd:") {
             break;
         }
 
-        let line = lines.next().unwrap().ok()?;
+        let line = lines
+            .next()
+            .unwrap()
+            .map_err(|_| LineParseError::InvalidUtf8)?;
         *line_no += 1;
-        let t = line.trim_start();
+        let t = trim_start(&line);
 
-        if let Some(rest) = t.strip_prefix("when:") {
-            let ts_str = rest.trim_start();
-            timestamp = ts_str.parse().ok();
-        } else if t.starts_with("paths:") {
+        if let Some(rest) = strip_prefix(t, b"when:") {
+            let ts_bytes = trim_start(rest);
+            let ts_str = std::str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+            timestamp = match ts_str.parse() {
+                Ok(t) => Some(t),
+                Err(_) => return Ok(None),
+            };
+        } else if t.starts_with(b"paths:") {
             while let Some(path_res) = lines.peek() {
-                let path_line = path_res.as_ref().ok()?;
-                let ps = path_line.trim_start();
-                if ps.starts_with("- cmd:") {
+                let path_line = path_res.as_ref().map_err(|_| LineParseError::InvalidUtf8)?;
+                let ps = trim_start(path_line);
+                if ps.starts_with(b"- cmd:") {
                     break;
-                } else if ps.starts_with("- ") {
-                    let line = lines.next().unwrap().ok()?;
+                } else if ps.starts_with(b"- ") {
+                    let line = lines
+                        .next()
+                        .unwrap()
+                        .map_err(|_| LineParseError::InvalidUtf8)?;
                     *line_no += 1;
-                    let ps = line.trim_start();
-                    paths.push(unescape_fish(&ps[2..]));
+                    let ps = trim_start(&line);
+                    let path_bytes = &ps[2..];
+                    let (p_raw, invalid) = decode_lossy(path_bytes);
+                    if invalid {
+                        warn_lossy_utf8(path, *line_no, "path", &line);
+                    }
+                    paths.push(unescape_fish(&p_raw));
                 } else if ps.is_empty() {
                     let _ = lines.next();
                     *line_no += 1;
@@ -335,13 +495,16 @@ where
         }
     }
 
-    let timestamp = timestamp?;
-    Some(HistoryEntry {
+    let Some(timestamp) = timestamp else {
+        return Ok(None);
+    };
+
+    Ok(Some(HistoryEntry {
         timestamp,
         duration: 0,
         command,
         paths,
-    })
+    }))
 }
 
 /// Writes history entries in the specified format.
@@ -430,7 +593,7 @@ fn escape_fish(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{self, Cursor};
 
     #[test]
     fn parse_simple_entry() {
@@ -727,6 +890,41 @@ mod tests {
         let reader = Cursor::new(input);
         let entries = parse_readers([(reader, "-")]).expect("should parse");
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_reader_handles_invalid_utf8_in_command() {
+        let input = b": 1:0;ok\n: 2:0;bad\xff\n: 3:0;again\n".to_vec();
+        let reader = Cursor::new(input);
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[1].command, "bad\u{FFFD}");
+    }
+
+    #[test]
+    fn parse_reader_handles_invalid_utf8_in_fish_command() {
+        let input =
+            b"- cmd: foo\n  when: 1\n- cmd: bad\xff\n  when: 2\n- cmd: bar\n  when: 3\n".to_vec();
+        let reader = Cursor::new(input);
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[1].command, "bad\u{FFFD}");
+    }
+
+    #[test]
+    fn parse_reader_errors_on_invalid_zsh_metadata() {
+        let input = b": 1:\xff;echo bad\n".to_vec();
+        let reader = Cursor::new(input);
+        let err = parse_readers([(reader, "-")]).expect_err("should error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn parse_reader_errors_on_invalid_fish_metadata() {
+        let input = b"- cmd: echo\n  when: \xff\n".to_vec();
+        let reader = Cursor::new(input);
+        let err = parse_readers([(reader, "-")]).expect_err("should error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
