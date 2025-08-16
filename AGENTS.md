@@ -24,10 +24,10 @@ $ cargo fmt --all
 
 ## Code Quality
 
-Run clippy and treat warnings as errors:
+Run clippy (including pedantic lints) and treat warnings as errors:
 
 ```sh
-$ cargo clippy --all-targets --all-features -- -D warnings
+$ cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
 ## Building

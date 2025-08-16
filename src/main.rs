@@ -21,12 +21,11 @@ fn main() -> io::Result<()> {
             }
             "--format" => {
                 if let Some(fmt) = args.next() {
-                    format = match parse_format(&fmt) {
-                        Some(f) => f,
-                        None => {
-                            eprintln!("unknown format: {fmt}");
-                            process::exit(1);
-                        }
+                    format = if let Some(f) = parse_format(&fmt) {
+                        f
+                    } else {
+                        eprintln!("unknown format: {fmt}");
+                        process::exit(1);
                     };
                 } else {
                     eprintln!("--format requires a value");
@@ -35,12 +34,11 @@ fn main() -> io::Result<()> {
             }
             _ if arg.starts_with("--format=") => {
                 let fmt = &arg["--format=".len()..];
-                format = match parse_format(fmt) {
-                    Some(f) => f,
-                    None => {
-                        eprintln!("unknown format: {fmt}");
-                        process::exit(1);
-                    }
+                format = if let Some(f) = parse_format(fmt) {
+                    f
+                } else {
+                    eprintln!("unknown format: {fmt}");
+                    process::exit(1);
                 };
             }
             _ => {
@@ -49,15 +47,15 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let entries = if !paths.is_empty() {
+    let entries = if paths.is_empty() {
+        histutils::parse_readers([(io::stdin(), "-")])?
+    } else {
         let mut readers = Vec::new();
         for p in &paths {
             let f = File::open(p)?;
             readers.push((f, p.clone()));
         }
         histutils::parse_readers(readers)?
-    } else {
-        histutils::parse_readers([(io::stdin(), "-")])?
     };
 
     let mut stdout = io::stdout();
