@@ -1,4 +1,4 @@
-use histutils::{ShellFormat, parse_format};
+use histutils::ShellFormat;
 use std::env;
 use std::fs::File;
 use std::io::{self, Read, Seek};
@@ -28,7 +28,7 @@ fn main() -> io::Result<()> {
             }
             "--format" => {
                 if let Some(fmt) = args.next() {
-                    format = if let Some(f) = parse_format(&fmt) {
+                    format = if let Some(f) = parse_format_opt(&fmt) {
                         Some(f)
                     } else {
                         eprintln!("unknown format: {fmt}");
@@ -41,7 +41,7 @@ fn main() -> io::Result<()> {
             }
             _ if arg.starts_with("--format=") => {
                 let fmt = &arg["--format=".len()..];
-                format = if let Some(f) = parse_format(fmt) {
+                format = if let Some(f) = parse_format_opt(fmt) {
                     Some(f)
                 } else {
                     eprintln!("unknown format: {fmt}");
@@ -85,4 +85,13 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_format_opt(s: &str) -> Option<ShellFormat> {
+    match s {
+        "sh" | "bash" => Some(ShellFormat::Sh),
+        "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
+        "fish" => Some(ShellFormat::Fish),
+        _ => None,
+    }
 }

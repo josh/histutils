@@ -17,15 +17,6 @@ pub enum ShellFormat {
     Fish,
 }
 
-#[must_use]
-pub fn parse_format(s: &str) -> Option<ShellFormat> {
-    match s {
-        "sh" | "bash" => Some(ShellFormat::Sh),
-        "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
-        "fish" => Some(ShellFormat::Fish),
-        _ => None,
-    }
-}
 fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
     parse_reader_inner(reader, Some(path.as_ref()))
 }
