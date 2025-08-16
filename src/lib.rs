@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Cursor, Error, ErrorKind, Result as IoResult, Write};
+use std::iter::Peekable;
 use std::path::{Path, PathBuf};
+use std::str;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
@@ -32,7 +34,7 @@ where
     pub path: Option<PathBuf>,
 }
 
-impl<'a> From<&'a str> for HistoryFile<std::io::Cursor<&'a str>> {
+impl<'a> From<&'a str> for HistoryFile<Cursor<&'a str>> {
     /// Creates a new `HistoryFile` instance from a string slice.
     ///
     /// # Examples
@@ -42,13 +44,13 @@ impl<'a> From<&'a str> for HistoryFile<std::io::Cursor<&'a str>> {
     /// ```
     fn from(content: &'a str) -> Self {
         Self {
-            reader: std::io::Cursor::new(content),
+            reader: Cursor::new(content),
             path: None,
         }
     }
 }
 
-impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<std::io::Cursor<&'a [u8]>> {
+impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
     /// Creates a new `HistoryFile` instance from a byte array.
     ///
     /// # Examples
@@ -58,7 +60,7 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<std::io::Cursor<&'a [
     /// ```
     fn from(content: &'a [u8; N]) -> Self {
         Self {
-            reader: std::io::Cursor::new(content.as_slice()),
+            reader: Cursor::new(content.as_slice()),
             path: None,
         }
     }
@@ -88,7 +90,7 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<std::io::Cursor<&'a [
 /// # Errors
 ///
 /// Returns an error if reading from any reader fails.
-pub fn parse_entries<R, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+pub fn parse_entries<R, I>(readers: I) -> IoResult<Vec<HistoryEntry>>
 where
     R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
@@ -131,7 +133,7 @@ where
 /// is encountered in extended shell formats.
 pub fn parse_entries_and_format<R, I>(
     files: I,
-) -> io::Result<(Vec<HistoryEntry>, Option<ShellFormat>)>
+) -> IoResult<(Vec<HistoryEntry>, Option<ShellFormat>)>
 where
     R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
@@ -215,9 +217,9 @@ fn detect_format_line(first_line: &[u8]) -> ShellFormat {
     }
 }
 
-fn detect_format_from_lines<I>(lines: &mut std::iter::Peekable<I>) -> ShellFormat
+fn detect_format_from_lines<I>(lines: &mut Peekable<I>) -> ShellFormat
 where
-    I: Iterator<Item = io::Result<Vec<u8>>>,
+    I: Iterator<Item = IoResult<Vec<u8>>>,
 {
     if let Some(Ok(first_line)) = lines.peek() {
         detect_format_line(first_line)
@@ -226,12 +228,9 @@ where
     }
 }
 
-fn parse_sh_format<I>(
-    lines: &mut std::iter::Peekable<I>,
-    path: Option<&Path>,
-) -> io::Result<Vec<HistoryEntry>>
+fn parse_sh_format<I>(lines: &mut Peekable<I>, path: Option<&Path>) -> IoResult<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<Vec<u8>>>,
+    I: Iterator<Item = IoResult<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -270,11 +269,11 @@ where
 }
 
 fn parse_zsh_extended_format<I>(
-    lines: &mut std::iter::Peekable<I>,
+    lines: &mut Peekable<I>,
     path: Option<&Path>,
-) -> io::Result<Vec<HistoryEntry>>
+) -> IoResult<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<Vec<u8>>>,
+    I: Iterator<Item = IoResult<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -318,12 +317,9 @@ where
     Ok(entries)
 }
 
-fn parse_fish_format<I>(
-    lines: &mut std::iter::Peekable<I>,
-    path: Option<&Path>,
-) -> io::Result<Vec<HistoryEntry>>
+fn parse_fish_format<I>(lines: &mut Peekable<I>, path: Option<&Path>) -> IoResult<Vec<HistoryEntry>>
 where
-    I: Iterator<Item = io::Result<Vec<u8>>>,
+    I: Iterator<Item = IoResult<Vec<u8>>>,
 {
     let mut entries = Vec::new();
     let mut line_no: usize = 0;
@@ -364,7 +360,7 @@ impl<R: BufRead> ByteLines<R> {
 }
 
 impl<R: BufRead> Iterator for ByteLines<R> {
-    type Item = io::Result<Vec<u8>>;
+    type Item = IoResult<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.buf.clear();
@@ -408,15 +404,15 @@ fn warn_lossy_utf8(path: Option<&Path>, line_no: usize, what: &str, line: &[u8])
     }
 }
 
-fn invalid_utf8_error(path: Option<&Path>, line_no: usize) -> io::Error {
+fn invalid_utf8_error(path: Option<&Path>, line_no: usize) -> Error {
     if let Some(p) = path {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
+        Error::new(
+            ErrorKind::InvalidData,
             format!("invalid UTF-8 in metadata in {}:{line_no}", p.display()),
         )
     } else {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
+        Error::new(
+            ErrorKind::InvalidData,
             format!("invalid UTF-8 in metadata at line {line_no}"),
         )
     }
@@ -446,7 +442,7 @@ fn strip_prefix<'a>(s: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
 }
 
 fn decode_lossy(bytes: &[u8]) -> (String, bool) {
-    match std::str::from_utf8(bytes) {
+    match str::from_utf8(bytes) {
         Ok(s) => (s.to_string(), false),
         Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
     }
@@ -473,8 +469,8 @@ fn parse_zsh_extended_line_bytes(
     let dur_bytes = &rest[..idx_sc];
     let cmd_bytes = &rest[idx_sc + 1..];
 
-    let ts_str = std::str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
-    let dur_str = std::str::from_utf8(dur_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+    let ts_str = str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+    let dur_str = str::from_utf8(dur_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
     let timestamp: u64 = match ts_str.parse() {
         Ok(t) => t,
         Err(_) => return Ok(None),
@@ -542,13 +538,13 @@ fn unescape_fish(s: &str) -> String {
 
 fn parse_fish_entry_bytes<I>(
     first_line: &[u8],
-    lines: &mut std::iter::Peekable<I>,
+    lines: &mut Peekable<I>,
     line_no: &mut usize,
     path: Option<&Path>,
     start_line: usize,
 ) -> Result<Option<HistoryEntry>, LineParseError>
 where
-    I: Iterator<Item = io::Result<Vec<u8>>>,
+    I: Iterator<Item = IoResult<Vec<u8>>>,
 {
     let t = trim_start(first_line);
     let Some(cmd_bytes) = strip_prefix(t, b"- cmd:") else {
@@ -579,7 +575,7 @@ where
 
         if let Some(rest) = strip_prefix(t, b"when:") {
             let ts_bytes = trim_start(rest);
-            let ts_str = std::str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
+            let ts_str = str::from_utf8(ts_bytes).map_err(|_| LineParseError::InvalidUtf8)?;
             timestamp = match ts_str.parse() {
                 Ok(t) => Some(t),
                 Err(_) => return Ok(None),
@@ -635,7 +631,7 @@ pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
     format: ShellFormat,
-) -> io::Result<()> {
+) -> IoResult<()> {
     match format {
         ShellFormat::Sh => write_sh_format(writer, entries),
         ShellFormat::ZshExtended => write_zsh_format(writer, entries),
@@ -646,7 +642,7 @@ pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
 fn write_sh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
-) -> io::Result<()> {
+) -> IoResult<()> {
     for entry in entries {
         writeln!(writer, "{}", escape_command(&entry.command))?;
     }
@@ -656,7 +652,7 @@ fn write_sh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
 fn write_zsh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
-) -> io::Result<()> {
+) -> IoResult<()> {
     for entry in entries {
         writeln!(
             writer,
@@ -672,7 +668,7 @@ fn write_zsh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
 fn write_fish_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     writer: &mut W,
     entries: I,
-) -> io::Result<()> {
+) -> IoResult<()> {
     for entry in entries {
         writeln!(writer, "- cmd: {}", escape_fish(&entry.command))?;
         writeln!(writer, "  when: {}", entry.timestamp)?;
@@ -740,7 +736,7 @@ mod tests {
 
     #[test]
     fn detect_format_none() {
-        let readers: Vec<HistoryFile<std::io::Cursor<&[u8]>>> = Vec::new();
+        let readers: Vec<HistoryFile<Cursor<&[u8]>>> = Vec::new();
         let (_entries, fmt) = parse_entries_and_format(readers).unwrap();
         assert_eq!(fmt, None);
     }
@@ -938,14 +934,14 @@ mod tests {
     fn parse_reader_errors_on_invalid_zsh_metadata() {
         let input: HistoryFile<_> = b": 1:\xff;echo bad\n".into();
         let err = parse_entries([input]).expect_err("should error");
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
     #[test]
     fn parse_reader_errors_on_invalid_fish_metadata() {
         let input: HistoryFile<_> = b"- cmd: echo\n  when: \xff\n".into();
         let err = parse_entries([input]).expect_err("should error");
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
     }
 
     #[test]
