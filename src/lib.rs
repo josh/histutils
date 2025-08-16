@@ -16,24 +16,56 @@ pub enum ShellFormat {
 }
 
 pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
-    let mut entries = Vec::new();
     let buf_reader = io::BufReader::new(reader);
     let mut lines = buf_reader.lines().peekable();
 
+    let format = detect_format(&mut lines);
+    match format {
+        ShellFormat::Fish => parse_fish_history(&mut lines),
+        ShellFormat::Sh => parse_sh_history(&mut lines),
+        ShellFormat::ZshExtended => parse_zsh_history(&mut lines),
+    }
+}
+
+fn detect_format<I>(lines: &mut std::iter::Peekable<I>) -> ShellFormat
+where
+    I: Iterator<Item = io::Result<String>>,
+{
     if let Some(Ok(first_line)) = lines.peek() {
-        if first_line.trim_start().starts_with("- cmd:") {
-            while let Some(line_res) = lines.next() {
-                let line = line_res?;
-                if line.trim_start().starts_with("- cmd:") {
-                    if let Some(entry) = parse_fish_entry(line, &mut lines) {
-                        entries.push(entry);
-                    }
-                }
+        let first_line = first_line.trim_start();
+        if first_line.starts_with("- cmd:") {
+            ShellFormat::Fish
+        } else if first_line.starts_with(":") {
+            ShellFormat::ZshExtended
+        } else {
+            ShellFormat::Sh
+        }
+    } else {
+        ShellFormat::Sh
+    }
+}
+
+fn parse_fish_history<I>(lines: &mut std::iter::Peekable<I>) -> io::Result<Vec<HistoryEntry>>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let mut entries = Vec::new();
+    while let Some(line_res) = lines.next() {
+        let line = line_res?;
+        if line.trim_start().starts_with("- cmd:") {
+            if let Some(entry) = parse_fish_entry(line, lines) {
+                entries.push(entry);
             }
-            return Ok(entries);
         }
     }
+    Ok(entries)
+}
 
+fn parse_sh_history<I>(lines: &mut std::iter::Peekable<I>) -> io::Result<Vec<HistoryEntry>>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let mut entries = Vec::new();
     while let Some(line_res) = lines.next() {
         let mut line = line_res?;
 
@@ -49,16 +81,56 @@ pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
             }
         }
 
-        if let Some(entry) = parse_line(&line) {
+        if let Some(entry) = parse_sh_line(&line) {
             entries.push(entry);
         }
     }
     Ok(entries)
 }
 
-fn parse_line(line: &str) -> Option<HistoryEntry> {
-    let s = line.trim_start();
+fn parse_zsh_history<I>(lines: &mut std::iter::Peekable<I>) -> io::Result<Vec<HistoryEntry>>
+where
+    I: Iterator<Item = io::Result<String>>,
+{
+    let mut entries = Vec::new();
+    while let Some(line_res) = lines.next() {
+        let mut line = line_res?;
 
+        while line.ends_with('\\') {
+            line.pop();
+            line.push('\n');
+
+            if let Some(next_line_res) = lines.next() {
+                let next_line = next_line_res?;
+                line.push_str(&next_line);
+            } else {
+                break;
+            }
+        }
+
+        if let Some(entry) = parse_zsh_line(&line) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+fn parse_sh_line(line: &str) -> Option<HistoryEntry> {
+    let s = line.trim_start();
+    if s.is_empty() {
+        None
+    } else {
+        Some(HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command: s.to_string(),
+            paths: Vec::new(),
+        })
+    }
+}
+
+fn parse_zsh_line(line: &str) -> Option<HistoryEntry> {
+    let s = line.trim_start();
     if let Some(rest) = s.strip_prefix(':') {
         let mut rest = rest.trim_start();
 
@@ -77,14 +149,6 @@ fn parse_line(line: &str) -> Option<HistoryEntry> {
         Some(HistoryEntry {
             timestamp,
             duration,
-            command,
-            paths: Vec::new(),
-        })
-    } else if !s.is_empty() {
-        let command = s.to_string();
-        Some(HistoryEntry {
-            timestamp: 0,
-            duration: 0,
             command,
             paths: Vec::new(),
         })
@@ -302,6 +366,16 @@ mod tests {
         assert_eq!(entries[1].timestamp, 1700000002);
         assert_eq!(entries[1].duration, 5);
         assert_eq!(entries[1].command, "ls -la");
+    }
+
+    #[test]
+    fn ignore_non_zsh_line() {
+        let input = ": 1700000001:0;echo hello\nls -la\n";
+        let reader = Cursor::new(input);
+        let entries = parse_reader(reader).expect("should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "echo hello");
     }
 
     #[test]
