@@ -20,7 +20,11 @@ fn main() -> io::Result<()> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("usage: histutils [--format FORMAT] [FILE]");
+                println!("usage: histutils [--format FORMAT] [--version] [FILE]");
+                return Ok(());
+            }
+            "--version" | "-V" => {
+                println!("{}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--format" => {
