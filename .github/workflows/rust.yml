@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install Rust toolchain
+        run: rustup show
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
