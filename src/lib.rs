@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub timestamp: u64,
     pub duration: u64,
