@@ -16,3 +16,9 @@ Migrate formats.
 $ cat ~/.zsh_history | histutils --format fish
 $ cat ~/.local/share/fish/fish_history | histutils --format zsh
 ```
+
+Count entries in a history file.
+
+```
+$ histutils --count ~/.zsh_history
+```

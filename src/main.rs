@@ -8,16 +8,20 @@ fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
     let mut format = ShellFormat::ZshExtended;
     let mut paths: Vec<String> = Vec::new();
+    let mut count = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("usage: histutils [--format FORMAT] [--version] [FILE...]");
+                println!("usage: histutils [--format FORMAT] [--count] [--version] [FILE...]");
                 return Ok(());
             }
             "--version" | "-V" => {
                 println!("{}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            "--count" | "-c" => {
+                count = true;
             }
             "--format" => {
                 if let Some(fmt) = args.next() {
@@ -57,9 +61,12 @@ fn main() -> io::Result<()> {
         }
         histutils::parse_readers(readers)?
     };
-
-    let mut stdout = io::stdout();
-    histutils::write_entries(&mut stdout, entries, format)?;
+    if count {
+        println!("{}", entries.len());
+    } else {
+        let mut stdout = io::stdout();
+        histutils::write_entries(&mut stdout, entries, format)?;
+    }
 
     Ok(())
 }
