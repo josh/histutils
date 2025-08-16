@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
@@ -41,11 +42,13 @@ where
     P: AsRef<Path>,
     I: IntoIterator<Item = (R, P)>,
 {
-    let mut seen: HashSet<HistoryEntry> = HashSet::new();
+    let mut seen: HashSet<u64> = HashSet::new();
     let mut entries = Vec::new();
     for (reader, path) in readers {
         for entry in parse_reader(reader, path)? {
-            if seen.insert(entry.clone()) {
+            let mut hasher = DefaultHasher::new();
+            entry.hash(&mut hasher);
+            if seen.insert(hasher.finish()) {
                 entries.push(entry);
             }
         }

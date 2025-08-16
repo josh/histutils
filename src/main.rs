@@ -55,9 +55,9 @@ fn main() -> io::Result<()> {
         histutils::parse_readers([(io::stdin(), "-")])?
     } else {
         let mut readers = Vec::new();
-        for p in &paths {
-            let f = File::open(p)?;
-            readers.push((f, p.clone()));
+        for p in paths {
+            let f = File::open(&p)?;
+            readers.push((f, p));
         }
         histutils::parse_readers(readers)?
     };
