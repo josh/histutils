@@ -44,9 +44,8 @@ pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
 fn parse_line(line: &str) -> Option<HistoryEntry> {
     let s = line.trim_start();
 
-    if s.starts_with(':') {
-        let mut rest = &s[1..];
-        rest = rest.trim_start();
+    if let Some(rest) = s.strip_prefix(':') {
+        let mut rest = rest.trim_start();
 
         let idx_colon = rest.find(':')?;
         let ts_str = &rest[..idx_colon];
@@ -105,9 +104,9 @@ fn write_zsh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
     entries: I,
 ) -> io::Result<()> {
     for entry in entries {
-        write!(
+        writeln!(
             writer,
-            ": {}:{};{}\n",
+            ": {}:{};{}",
             entry.timestamp,
             entry.duration,
             escape_command(&entry.command)
