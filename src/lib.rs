@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HistoryEntry {
     pub timestamp: i64,
     pub duration: i64,
@@ -40,9 +41,14 @@ where
     P: AsRef<Path>,
     I: IntoIterator<Item = (R, P)>,
 {
+    let mut seen: HashSet<HistoryEntry> = HashSet::new();
     let mut entries = Vec::new();
     for (reader, path) in readers {
-        entries.extend(parse_reader(reader, path)?);
+        for entry in parse_reader(reader, path)? {
+            if seen.insert(entry.clone()) {
+                entries.push(entry);
+            }
+        }
     }
     entries.sort_by_key(|e| e.timestamp);
     Ok(entries)
@@ -659,6 +665,16 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[1].timestamp, 2);
+    }
+
+    #[test]
+    fn parse_readers_deduplicates_exact_matches() {
+        let r1 = Cursor::new(": 1:0;one\n");
+        let r2 = Cursor::new(": 1:0;one\n");
+        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].timestamp, 1);
+        assert_eq!(entries[0].command, "one");
     }
 
     #[test]
