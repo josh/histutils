@@ -16,31 +16,19 @@ pub enum ShellFormat {
     Fish,
 }
 
-pub fn parse_reader<R: Read>(reader: R) -> io::Result<Vec<HistoryEntry>> {
-    parse_reader_inner(reader, None)
+pub fn parse_format(s: &str) -> Option<ShellFormat> {
+    match s {
+        "sh" | "bash" => Some(ShellFormat::Sh),
+        "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
+        "fish" => Some(ShellFormat::Fish),
+        _ => None,
+    }
 }
-
-pub fn parse_reader_with_path<R: Read, P: AsRef<Path>>(
-    reader: R,
-    path: P,
-) -> io::Result<Vec<HistoryEntry>> {
+fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<HistoryEntry>> {
     parse_reader_inner(reader, Some(path.as_ref()))
 }
 
-pub fn parse_readers<R, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
-where
-    R: Read,
-    I: IntoIterator<Item = R>,
-{
-    let mut entries = Vec::new();
-    for reader in readers {
-        entries.extend(parse_reader(reader)?);
-    }
-    entries.sort_by_key(|e| e.timestamp);
-    Ok(entries)
-}
-
-pub fn parse_readers_with_paths<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
+pub fn parse_readers<R, P, I>(readers: I) -> io::Result<Vec<HistoryEntry>>
 where
     R: Read,
     P: AsRef<Path>,
@@ -48,7 +36,7 @@ where
 {
     let mut entries = Vec::new();
     for (reader, path) in readers {
-        entries.extend(parse_reader_with_path(reader, path)?);
+        entries.extend(parse_reader(reader, path)?);
     }
     entries.sort_by_key(|e| e.timestamp);
     Ok(entries)
@@ -407,7 +395,7 @@ mod tests {
     fn parse_simple_entry() {
         let input = "echo hello\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello");
@@ -417,7 +405,7 @@ mod tests {
     fn parse_simple_entries() {
         let input = "echo hello\nls -la\npwd\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].command, "echo hello");
@@ -429,7 +417,7 @@ mod tests {
     fn parse_simple_multiline_entry() {
         let input = "echo hello\\\nanother\\\nline\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello\nanother\nline");
@@ -439,7 +427,7 @@ mod tests {
     fn parse_extended_entries() {
         let input = ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
 
@@ -521,7 +509,7 @@ mod tests {
         let original = ": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
 
         let reader = Cursor::new(original);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "echo hello\nworld");
@@ -538,7 +526,7 @@ mod tests {
     fn parse_fish_entry_basic() {
         let input = "- cmd: cargo build\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1700000000);
@@ -550,7 +538,7 @@ mod tests {
         let input =
             "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].paths, vec!["~/Developer/histutils".to_string()]);
@@ -560,7 +548,7 @@ mod tests {
     fn parse_fish_entry_multiple_paths() {
         let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n    - ~/project2\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -573,7 +561,7 @@ mod tests {
     fn parse_fish_entry_paths_then_new_entry() {
         let input = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n- cmd: echo hi\n  when: 1700000001\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].paths, vec!["~/project1".to_string()]);
@@ -584,7 +572,7 @@ mod tests {
     fn parse_fish_multiline_command() {
         let input = "- cmd: echo \"hello\\nmultiline\\nstring\"\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo \"hello\nmultiline\nstring\"");
@@ -594,7 +582,7 @@ mod tests {
     fn parse_fish_colon_in_command() {
         let input = "- cmd: git commit -m \"Test: something\"\n  when: 1516464765\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1516464765);
@@ -624,7 +612,7 @@ mod tests {
         let original =
             "- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
         let reader = Cursor::new(original);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
@@ -637,7 +625,7 @@ mod tests {
     fn roundtrip_fish_with_paths() {
         let original = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
         let reader = Cursor::new(original);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
@@ -650,7 +638,7 @@ mod tests {
     fn parse_reader_ignores_invalid_and_empty() {
         let input = ": invalid\n\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
         assert!(entries.is_empty());
     }
 
@@ -658,7 +646,7 @@ mod tests {
     fn parse_readers_sorts_by_timestamp() {
         let r1 = Cursor::new(": 2:0;two\n");
         let r2 = Cursor::new(": 1:0;one\n");
-        let entries = parse_readers(vec![r1, r2]).expect("should parse");
+        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[1].timestamp, 2);
@@ -668,7 +656,7 @@ mod tests {
     fn parse_fish_entry_handles_escapes() {
         let input = "- cmd: first\\nsecond\\\\third\\x\n  when: 1700000000\n";
         let reader = Cursor::new(input);
-        let entries = parse_reader(reader).expect("should parse");
+        let entries = parse_readers([(reader, "-")]).expect("should parse");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "first\nsecond\\third\\x");
     }
