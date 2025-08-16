@@ -183,7 +183,9 @@ where
             while let Some(path_res) = lines.peek() {
                 let path_line = path_res.as_ref().ok()?;
                 let ps = path_line.trim_start();
-                if ps.starts_with("- ") {
+                if ps.starts_with("- cmd:") {
+                    break;
+                } else if ps.starts_with("- ") {
                     let line = lines.next().unwrap().ok()?;
                     *line_no += 1;
                     let ps = line.trim_start();
@@ -261,7 +263,6 @@ fn write_fish_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
                 writeln!(writer, "    - {}", escape_fish(&p))?;
             }
         }
-        writeln!(writer)?;
     }
     Ok(())
 }
@@ -495,14 +496,27 @@ mod tests {
 
         let result = String::from_utf8(output).expect("valid utf8");
         let expected =
-            "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n\n";
+            "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n";
         assert_eq!(result, expected);
     }
 
     #[test]
     fn roundtrip_fish_multiline() {
         let original =
-            "- cmd: echo hello\\nworld\n  when: 1700000001\n\n- cmd: ls\n  when: 1700000002\n\n";
+            "- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
+        let reader = Cursor::new(original);
+        let entries = parse_reader(reader).expect("should parse");
+
+        let mut output = Vec::new();
+        write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
+        let result = String::from_utf8(output).expect("valid utf8");
+
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn roundtrip_fish_with_paths() {
+        let original = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
         let reader = Cursor::new(original);
         let entries = parse_reader(reader).expect("should parse");
 
@@ -542,7 +556,7 @@ mod tests {
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).expect("should write");
         let result = String::from_utf8(output).expect("valid utf8");
-        assert_eq!(result, "- cmd: one\\ntwo\\\\\n  when: 0\n\n");
+        assert_eq!(result, "- cmd: one\\ntwo\\\\\n  when: 0\n");
     }
 
     #[test]
