@@ -1,5 +1,4 @@
-use std::collections::{HashSet, hash_map::DefaultHasher};
-use std::hash::{Hash, Hasher};
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
@@ -31,6 +30,26 @@ fn parse_reader<R: Read, P: AsRef<Path>>(reader: R, path: P) -> io::Result<Vec<H
     parse_reader_inner(reader, Some(path.as_ref()))
 }
 
+fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
+    debug_assert!(
+        a.duration == b.duration || a.duration == 0 || b.duration == 0,
+        "merging entries with conflicting durations",
+    );
+    if a.duration == 0 {
+        a.duration = b.duration;
+    }
+    if a.paths.is_empty() {
+        a.paths = b.paths;
+    } else if !b.paths.is_empty() {
+        for p in b.paths {
+            if !a.paths.contains(&p) {
+                a.paths.push(p);
+            }
+        }
+    }
+    a
+}
+
 /// Parses history entries from multiple readers.
 ///
 /// # Errors
@@ -42,19 +61,23 @@ where
     P: AsRef<Path>,
     I: IntoIterator<Item = (R, P)>,
 {
-    let mut seen: HashSet<u64> = HashSet::new();
-    let mut entries = Vec::new();
+    let mut map: BTreeMap<i64, Vec<HistoryEntry>> = BTreeMap::new();
     for (reader, path) in readers {
         for entry in parse_reader(reader, path)? {
-            let mut hasher = DefaultHasher::new();
-            entry.hash(&mut hasher);
-            if seen.insert(hasher.finish()) {
+            let entries = map.entry(entry.timestamp).or_default();
+            if entry.timestamp == 0 {
+                entries.push(entry);
+                continue;
+            }
+            if let Some(existing) = entries.iter_mut().find(|e| e.command == entry.command) {
+                let merged = merge_entries(existing.clone(), entry);
+                *existing = merged;
+            } else {
                 entries.push(entry);
             }
         }
     }
-    entries.sort_by_key(|e| e.timestamp);
-    Ok(entries)
+    Ok(map.into_iter().flat_map(|(_, v)| v).collect())
 }
 
 fn detect_format<I>(lines: &mut std::iter::Peekable<I>) -> ShellFormat
@@ -717,6 +740,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_readers_preserves_order_with_same_timestamp() {
+        let r1 = Cursor::new(": 100:0;b\n");
+        let r2 = Cursor::new(": 100:0;a\n");
+        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].command, "b");
+        assert_eq!(entries[1].command, "a");
+    }
+
+    #[test]
     fn parse_readers_deduplicates_exact_matches() {
         let r1 = Cursor::new(": 1:0;one\n");
         let r2 = Cursor::new(": 1:0;one\n");
@@ -724,6 +757,31 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[0].command, "one");
+    }
+
+    #[test]
+    fn parse_readers_keeps_zero_timestamp_duplicates() {
+        let r1 = Cursor::new("echo hi\n");
+        let r2 = Cursor::new("echo hi\n");
+        let entries = parse_readers([(r1, "-"), (r2, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].timestamp, 0);
+        assert_eq!(entries[1].timestamp, 0);
+        assert_eq!(entries[0].command, "echo hi");
+        assert_eq!(entries[1].command, "echo hi");
+    }
+
+    #[test]
+    fn parse_readers_merges_entries_with_richer_info() {
+        let zsh = Cursor::new(": 1000:5;echo hello\n");
+        let fish = Cursor::new("- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n");
+        let entries = parse_readers([(zsh, "-"), (fish, "-")]).expect("should parse");
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.timestamp, 1000);
+        assert_eq!(entry.command, "echo hello");
+        assert_eq!(entry.duration, 5);
+        assert_eq!(entry.paths, vec!["/tmp".to_string()]);
     }
 
     #[test]
