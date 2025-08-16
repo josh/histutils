@@ -653,6 +653,24 @@ mod tests {
     }
 
     #[test]
+    fn merge_different_format_histories() {
+        let sh = Cursor::new("echo sh\n");
+        let zsh = Cursor::new(": 1:0;echo zsh\n");
+        let fish = Cursor::new("- cmd: echo fish\n  when: 2\n");
+
+        let entries =
+            parse_readers([(sh, "sh"), (zsh, "zsh"), (fish, "fish")]).expect("should parse");
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].command, "echo sh");
+        assert_eq!(entries[1].command, "echo zsh");
+        assert_eq!(entries[2].command, "echo fish");
+        assert_eq!(entries[0].timestamp, 0);
+        assert_eq!(entries[1].timestamp, 1);
+        assert_eq!(entries[2].timestamp, 2);
+    }
+
+    #[test]
     fn parse_fish_entry_handles_escapes() {
         let input = "- cmd: first\\nsecond\\\\third\\x\n  when: 1700000000\n";
         let reader = Cursor::new(input);
