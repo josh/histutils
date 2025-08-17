@@ -1,7 +1,7 @@
 use histutils::{HistoryFile, ShellFormat, parse_entries_and_format, write_entries};
 use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader};
 use std::process;
 
 fn main() -> io::Result<()> {
@@ -55,23 +55,23 @@ fn main() -> io::Result<()> {
         paths.push("-".to_string());
     }
 
-    let mut history_files: Vec<HistoryFile<Box<dyn BufRead>>> = Vec::new();
-    for p in paths {
-        if p == "-" {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            history_files.push(HistoryFile {
-                reader: Box::new(io::Cursor::new(buf)),
-                path: Some(std::path::PathBuf::from("-")),
-            });
-        } else {
-            let f = File::open(&p)?;
-            history_files.push(HistoryFile {
-                reader: Box::new(BufReader::new(f)),
-                path: Some(std::path::PathBuf::from(p)),
-            });
-        }
-    }
+    let history_files: Vec<HistoryFile<Box<dyn BufRead>>> = paths
+        .into_iter()
+        .map(|p| -> io::Result<HistoryFile<Box<dyn BufRead>>> {
+            if p == "-" {
+                Ok(HistoryFile {
+                    reader: Box::new(BufReader::new(io::stdin())),
+                    path: None,
+                })
+            } else {
+                let f = File::open(&p)?;
+                Ok(HistoryFile {
+                    reader: Box::new(BufReader::new(f)),
+                    path: Some(std::path::PathBuf::from(p)),
+                })
+            }
+        })
+        .collect::<io::Result<Vec<_>>>()?;
 
     let (entries, detected_format) = parse_entries_and_format(history_files)?;
 
