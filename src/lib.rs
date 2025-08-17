@@ -295,7 +295,7 @@ where
     for entry_res in iter_sh_raw_entries(reader) {
         let (line, lineno) = entry_res?;
         if let Ok(s) = str::from_utf8(&line) {
-            let command = unescape_command(s);
+            let command = s.to_string();
             entries.push(HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -305,7 +305,7 @@ where
         } else {
             let s = String::from_utf8_lossy(&line);
             eprintln!("warning: invalid UTF-8 {}:{lineno}: {s}", path.display());
-            let command = unescape_command(&s);
+            let command = s.to_string();
             entries.push(HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -359,7 +359,7 @@ fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
     let duration = dur_str.parse()?;
 
     if let Ok(s) = str::from_utf8(cmd_bytes) {
-        let command = unescape_command(s);
+        let command = s.to_string();
         Ok(HistoryEntry {
             timestamp,
             duration,
@@ -368,7 +368,7 @@ fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
         })
     } else {
         let s = String::from_utf8_lossy(cmd_bytes);
-        let command = unescape_command(&s);
+        let command = s.to_string();
         Ok(HistoryEntry {
             timestamp,
             duration,
@@ -476,30 +476,6 @@ fn parse_fish_raw_entry(data: &[u8]) -> Result<HistoryEntry, ParseError> {
     })
 }
 
-fn unescape_command(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(next) = chars.next() {
-                match next {
-                    'n' => out.push('\n'),
-                    '\\' => out.push('\\'),
-                    other => {
-                        out.push('\\');
-                        out.push(other);
-                    }
-                }
-            } else {
-                out.push('\\');
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
 fn unescape_fish(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -597,11 +573,7 @@ where
     I: IntoIterator<Item = HistoryEntry>,
 {
     for entry in entries {
-        writeln!(
-            writer,
-            "{}",
-            entry.command.replace('\\', "\\\\").replace('\n', "\\\n")
-        )?;
+        writeln!(writer, "{}", entry.command.replace('\n', "\\\n"))?;
     }
     Ok(())
 }
@@ -634,7 +606,7 @@ where
             ": {}:{};{}",
             entry.timestamp,
             entry.duration,
-            entry.command.replace('\\', "\\\\").replace('\n', "\\\n")
+            entry.command.replace('\n', "\\\n")
         )?;
     }
     Ok(())
@@ -813,6 +785,24 @@ mod tests {
 
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].command, "echo hello\nanother\nline");
+        }
+
+        #[test]
+        fn parse_sh_backslash() {
+            let input: HistoryFile<_> = "echo hello \\ world\n".into();
+            let entries = parse_entries([input]).unwrap().entries;
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].command, "echo hello \\ world");
+        }
+
+        #[test]
+        fn parse_sh_double_backslash() {
+            let input: HistoryFile<_> = "echo hello \\\\ world\n".into();
+            let entries = parse_entries([input]).unwrap().entries;
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].command, "echo hello \\\\ world");
         }
 
         #[test]
@@ -1164,7 +1154,7 @@ mod tests {
         }
 
         #[test]
-        fn sh_escape_backslash() {
+        fn sh_no_escape_backslash() {
             let entries = vec![HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -1174,11 +1164,11 @@ mod tests {
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
-            assert_eq!(output, b"echo hello \\\\ world\n");
+            assert_eq!(output, b"echo hello \\ world\n");
         }
 
         #[test]
-        fn zsh_escape_backslash() {
+        fn zsh_no_escape_backslash() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -1188,7 +1178,7 @@ mod tests {
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
-            assert_eq!(output, b": 1:0;echo hello \\\\ world\n");
+            assert_eq!(output, b": 1:0;echo hello \\ world\n");
         }
 
         #[test]
@@ -1253,7 +1243,17 @@ mod tests {
 
         #[test]
         fn sh_backslash() {
-            let input = b"echo foo \\\\ hello\n";
+            let input = b"echo foo \\ bar\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
+
+            let mut output = Vec::new();
+            write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
+            assert_eq!(output, input);
+        }
+
+        #[test]
+        fn sh_double_backslash() {
+            let input = b"echo foo \\\\ bar\n";
             let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
@@ -1273,6 +1273,16 @@ mod tests {
 
         #[test]
         fn zsh_backslash() {
+            let input = b": 1:0;echo foo \\ hello\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
+
+            let mut output = Vec::new();
+            write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+            assert_eq!(output, input);
+        }
+
+        #[test]
+        fn zsh_double_backslash() {
             let input = b": 1:0;echo foo \\\\ hello\n";
             let entries = parse_entries([input.into()]).unwrap().entries;
 
