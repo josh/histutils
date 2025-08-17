@@ -350,11 +350,11 @@ where
 {
     let path = path.to_owned();
     ShellHistLines::new(reader).map(move |entry_res| {
-        let (line, lineno) = entry_res?;
+        let (line, line_no) = entry_res?;
         let command = if let Ok(s) = str::from_utf8(&line) {
             s.to_string()
         } else {
-            eprintln!("{}:{lineno}: invalid UTF-8", path.display());
+            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
             String::from_utf8_lossy(&line).to_string()
         };
         Ok(HistoryEntry {
@@ -375,10 +375,10 @@ where
 {
     let path = path.to_owned();
     ShellHistLines::new(reader).filter_map(move |entry_res| match entry_res {
-        Ok((line, lineno)) => match parse_zsh_raw_entry(&line) {
+        Ok((line, line_no)) => match parse_zsh_raw_entry(&line, &path, line_no) {
             Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                eprintln!("{}:{lineno}: {err}", path.display());
+                eprintln!("{}:{line_no}: {err}", path.display());
                 None
             }
         },
@@ -386,7 +386,11 @@ where
     })
 }
 
-fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
+fn parse_zsh_raw_entry(
+    line: &[u8],
+    path: &Path,
+    line_no: usize,
+) -> Result<HistoryEntry, ParseError> {
     if !line.starts_with(b":") {
         return Err(ParseError::BadZshExtendedHeader);
     }
@@ -409,23 +413,19 @@ fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
     let timestamp = ts_str.parse()?;
     let duration = dur_str.parse()?;
 
-    if let Ok(s) = str::from_utf8(cmd_bytes) {
-        let command = s.to_string();
-        Ok(HistoryEntry {
-            timestamp,
-            duration,
-            command,
-            paths: Vec::new(),
-        })
+    let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
+        s.to_string()
     } else {
-        let command = String::from_utf8_lossy(cmd_bytes).to_string();
-        Ok(HistoryEntry {
-            timestamp,
-            duration,
-            command,
-            paths: Vec::new(),
-        })
-    }
+        eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        String::from_utf8_lossy(cmd_bytes).to_string()
+    };
+
+    Ok(HistoryEntry {
+        timestamp,
+        duration,
+        command,
+        paths: Vec::new(),
+    })
 }
 
 struct FishHistEntries<'a, R>
@@ -509,10 +509,10 @@ where
 {
     let path = path.to_owned();
     FishHistEntries::new(reader).filter_map(move |entry_res| match entry_res {
-        Ok((entry_data, lineno)) => match parse_fish_raw_entry(&entry_data) {
+        Ok((entry_data, line_no)) => match parse_fish_raw_entry(&entry_data, &path, line_no) {
             Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                eprintln!("{}:{lineno}: {err}", path.display());
+                eprintln!("{}:{line_no}: {err}", path.display());
                 None
             }
         },
@@ -520,7 +520,11 @@ where
     })
 }
 
-fn parse_fish_raw_entry(data: &[u8]) -> Result<HistoryEntry, ParseError> {
+fn parse_fish_raw_entry(
+    data: &[u8],
+    path: &Path,
+    line_no: usize,
+) -> Result<HistoryEntry, ParseError> {
     let lines: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
 
     if lines.is_empty() {
@@ -531,7 +535,12 @@ fn parse_fish_raw_entry(data: &[u8]) -> Result<HistoryEntry, ParseError> {
         return Err(ParseError::BadFishHeader);
     };
     let cmd_bytes = cmd_bytes.strip_prefix(b" ").unwrap_or(cmd_bytes);
-    let command = unescape_fish(&String::from_utf8_lossy(cmd_bytes));
+    let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
+        unescape_fish(s)
+    } else {
+        eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        unescape_fish(&String::from_utf8_lossy(cmd_bytes))
+    };
 
     if lines.len() < 2 {
         return Err(ParseError::BadFishHeader);
