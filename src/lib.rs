@@ -791,7 +791,8 @@ mod tests {
     }
 
     mod parse_entries_primary_format {
-        use super::*;
+        use super::{HistoryFile, ShellFormat, parse_entries};
+        use std::io::Cursor;
 
         #[test]
         fn detect_format_none() {
@@ -906,7 +907,7 @@ mod tests {
     }
 
     mod parse_entries {
-        use super::*;
+        use super::{HistoryFile, parse_entries};
 
         mod sh {
             use super::{HistoryFile, parse_entries};
@@ -1184,7 +1185,7 @@ mod tests {
     }
 
     mod write_entries {
-        use super::*;
+        use super::{HistoryEntry, ShellFormat, write_entries};
 
         mod sh {
             use super::{HistoryEntry, ShellFormat, write_entries};
@@ -1429,7 +1430,7 @@ mod tests {
     }
 
     mod roundtrip {
-        use super::*;
+        use super::{ShellFormat, parse_entries, write_entries};
 
         mod sh {
             use super::{ShellFormat, parse_entries, write_entries};
