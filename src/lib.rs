@@ -125,7 +125,25 @@ where
 
     for history_file in files {
         let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
-        let mut lines = ByteLines::new(history_file.reader).peekable();
+        let mut reader = history_file.reader;
+        let mut buf = Vec::new();
+        let mut lines = std::iter::from_fn(move || {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => None,
+                Ok(_) => {
+                    if buf.ends_with(b"\n") {
+                        buf.pop();
+                        if buf.ends_with(b"\r") {
+                            buf.pop();
+                        }
+                    }
+                    Some(Ok(buf.clone()))
+                }
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .peekable();
 
         let file_format = detect_format_from_lines(&mut lines);
         original_formats.insert(file_format);
@@ -316,41 +334,6 @@ where
     }
 
     Ok(entries)
-}
-
-struct ByteLines<R: BufRead> {
-    reader: R,
-    buf: Vec<u8>,
-}
-
-impl<R: BufRead> ByteLines<R> {
-    fn new(reader: R) -> Self {
-        Self {
-            reader,
-            buf: Vec::new(),
-        }
-    }
-}
-
-impl<R: BufRead> Iterator for ByteLines<R> {
-    type Item = IoResult<Vec<u8>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.buf.clear();
-        match self.reader.read_until(b'\n', &mut self.buf) {
-            Ok(0) => None,
-            Ok(_) => {
-                if self.buf.ends_with(b"\n") {
-                    self.buf.pop();
-                    if self.buf.ends_with(b"\r") {
-                        self.buf.pop();
-                    }
-                }
-                Some(Ok(self.buf.clone()))
-            }
-            Err(e) => Some(Err(e)),
-        }
-    }
 }
 
 fn warn_invalid(path: Option<&Path>, line_no: usize, line: &[u8]) {
