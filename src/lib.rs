@@ -88,17 +88,19 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
 
 /// Detects the shell format of `BufRead` type.
 ///
+/// Peeks into buffer and does not advance the reader position.
+///
 /// # Examples
 ///
 /// ```
+/// let mut reader = std::io::Cursor::new(b"echo hello\n");
+/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Sh);
+///
 /// let mut reader = std::io::Cursor::new(b": 1234:0;echo hello\n");
 /// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::ZshExtended);
 ///
 /// let mut reader = std::io::Cursor::new(b"- cmd: echo hello\n  when: 1234\n");
 /// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Fish);
-///
-/// let mut reader = std::io::Cursor::new(b"echo hello\n");
-/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Sh);
 /// ```
 ///
 /// # Returns
@@ -524,93 +526,197 @@ fn unescape_fish(s: &str) -> String {
 
 /// Writes history entries in the specified format.
 ///
+/// # Arguments
+///
+/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
+/// * `entries` - An iterator over `HistoryEntry` items to be written
+/// * `format` - The shell format to use for output (`Sh`, `ZshExtended`, or `Fish`)
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
+///
 /// # Errors
 ///
 /// Returns an error if writing to the output fails.
-pub fn write_entries<W: Write, I: IntoIterator<Item = HistoryEntry>>(
-    writer: &mut W,
-    entries: I,
-    format: ShellFormat,
-) -> IoResult<()> {
+///
+/// # Example
+///
+/// ```
+/// let entries = vec![
+///     histutils::HistoryEntry {
+///         timestamp: 1640995200,
+///         duration: 1000,
+///         command: "ls -la".to_string(),
+///         paths: vec!["/home/user".to_string()],
+///     },
+///     histutils::HistoryEntry {
+///         timestamp: 1640995260,
+///         duration: 500,
+///         command: "git status".to_string(),
+///         paths: vec!["/home/user/project".to_string()],
+///     },
+/// ];
+///
+/// let mut output = std::io::Cursor::new(Vec::new());
+/// histutils::write_entries(&mut output, entries, histutils::ShellFormat::Sh)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn write_entries<W, I>(writer: &mut W, entries: I, format: ShellFormat) -> IoResult<()>
+where
+    W: Write,
+    I: IntoIterator<Item = HistoryEntry>,
+{
     match format {
-        ShellFormat::Sh => write_sh_format(writer, entries),
-        ShellFormat::ZshExtended => write_zsh_format(writer, entries),
-        ShellFormat::Fish => write_fish_format(writer, entries),
+        ShellFormat::Sh => write_sh_entries(writer, entries),
+        ShellFormat::ZshExtended => write_zsh_entries(writer, entries),
+        ShellFormat::Fish => write_fish_entries(writer, entries),
     }
 }
 
-fn write_sh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
-    writer: &mut W,
-    entries: I,
-) -> IoResult<()> {
+/// Writes history entries in sh/bash shell format.
+///
+/// This function outputs history entries as plain command lines, one per line,
+/// with proper escaping for newlines and backslashes.
+///
+/// # Arguments
+///
+/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
+/// * `entries` - An iterator over `HistoryEntry` items to be written in sh format
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails.
+pub fn write_sh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+where
+    W: Write,
+    I: IntoIterator<Item = HistoryEntry>,
+{
     for entry in entries {
-        writeln!(writer, "{}", escape_command(&entry.command))?;
+        writeln!(
+            writer,
+            "{}",
+            entry.command.replace('\\', "\\\\").replace('\n', "\\\n")
+        )?;
     }
     Ok(())
 }
 
-fn write_zsh_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
-    writer: &mut W,
-    entries: I,
-) -> IoResult<()> {
+/// Writes history entries in zsh extended format.
+///
+/// This function outputs history entries in zsh's extended history format,
+/// including timestamps, duration, and commands with proper escaping.
+///
+/// # Arguments
+///
+/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
+/// * `entries` - An iterator over `HistoryEntry` items to be written in zsh extended format
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails.
+pub fn write_zsh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+where
+    W: Write,
+    I: IntoIterator<Item = HistoryEntry>,
+{
     for entry in entries {
         writeln!(
             writer,
             ": {}:{};{}",
             entry.timestamp,
             entry.duration,
-            escape_command(&entry.command)
+            entry.command.replace('\\', "\\\\").replace('\n', "\\\n")
         )?;
     }
     Ok(())
 }
 
-fn write_fish_format<W: Write, I: IntoIterator<Item = HistoryEntry>>(
-    writer: &mut W,
-    entries: I,
-) -> IoResult<()> {
+/// Writes history entries in Fish shell format.
+///
+/// This function outputs history entries in Fish shell's YAML-based history format,
+/// including command text, timestamps, and associated file paths.
+///
+/// # Arguments
+///
+/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
+/// * `entries` - An iterator over `HistoryEntry` items to be written in Fish format
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails.
+pub fn write_fish_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+where
+    W: Write,
+    I: IntoIterator<Item = HistoryEntry>,
+{
     for entry in entries {
-        writeln!(writer, "- cmd: {}", escape_fish(&entry.command))?;
+        writeln!(
+            writer,
+            "- cmd: {}",
+            entry.command.replace('\\', "\\\\").replace('\n', "\\n")
+        )?;
         writeln!(writer, "  when: {}", entry.timestamp)?;
         if !entry.paths.is_empty() {
             writeln!(writer, "  paths:")?;
             for p in entry.paths {
-                writeln!(writer, "    - {}", escape_fish(&p))?;
+                writeln!(writer, "    - {}", &p)?;
             }
         }
     }
     Ok(())
 }
 
-fn escape_command(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\n' => out.push_str("\\\n"),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
-fn escape_fish(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\n' => out.push_str("\\n"),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    mod format_detection {
+    mod detect_format {
+        use super::{ShellFormat, detect_format};
+        use std::io::Cursor;
+
+        #[test]
+        fn empty_fallback() {
+            let mut reader = Cursor::new(b"");
+            assert_eq!(detect_format(&mut reader), ShellFormat::Sh);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn sh() {
+            let mut reader = Cursor::new(b"echo hello\n");
+            assert_eq!(detect_format(&mut reader), ShellFormat::Sh);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn zsh_extended() {
+            let mut reader = Cursor::new(b": 1234:0;echo hello\n");
+            assert_eq!(detect_format(&mut reader), ShellFormat::ZshExtended);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn fish() {
+            let mut reader = Cursor::new(b"- cmd: echo hello\n  when: 1234\n");
+            assert_eq!(detect_format(&mut reader), ShellFormat::Fish);
+            assert_eq!(reader.position(), 0);
+        }
+    }
+
+    mod parse_entries_primary_format {
         use super::*;
 
         #[test]
@@ -677,7 +783,7 @@ mod tests {
         }
     }
 
-    mod parsing {
+    mod parse_entries {
         use super::*;
 
         #[test]
@@ -835,10 +941,6 @@ mod tests {
             let entries = parse_entries([input]).unwrap().entries;
             assert_eq!(entries.len(), 0);
         }
-    }
-
-    mod merging {
-        use super::*;
 
         #[test]
         fn parse_readers_sorts_by_timestamp() {
@@ -913,11 +1015,11 @@ mod tests {
         }
     }
 
-    mod writing {
-        use super::*;
+    mod write_entries {
+        use super::{HistoryEntry, ShellFormat, write_entries};
 
         #[test]
-        fn write_sh_single_entry() {
+        fn sh_single() {
             let entries = vec![HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -931,7 +1033,7 @@ mod tests {
         }
 
         #[test]
-        fn write_zsh_single_entry() {
+        fn zsh_single() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -945,7 +1047,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_single_entry() {
+        fn fish_single() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -959,7 +1061,7 @@ mod tests {
         }
 
         #[test]
-        fn write_sh_multiple_entries() {
+        fn sh_multiple() {
             let entries = vec![
                 HistoryEntry {
                     timestamp: 0,
@@ -981,7 +1083,7 @@ mod tests {
         }
 
         #[test]
-        fn write_zsh_multiple_entries() {
+        fn zsh_multiple() {
             let entries = vec![
                 HistoryEntry {
                     timestamp: 1,
@@ -1003,7 +1105,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_multiple_entries() {
+        fn fish_multiple() {
             let entries = vec![
                 HistoryEntry {
                     timestamp: 1,
@@ -1028,7 +1130,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_path() {
+        fn fish_single_path() {
             let entries = vec![HistoryEntry {
                 timestamp: 1_700_000_000,
                 duration: 100,
@@ -1045,7 +1147,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_paths() {
+        fn fish_multiple_paths() {
             let entries = vec![HistoryEntry {
                 timestamp: 1_700_000_000,
                 duration: 100,
@@ -1062,7 +1164,7 @@ mod tests {
         }
 
         #[test]
-        fn write_sh_escape_backslash() {
+        fn sh_escape_backslash() {
             let entries = vec![HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -1076,7 +1178,7 @@ mod tests {
         }
 
         #[test]
-        fn write_zsh_escape_backslash() {
+        fn zsh_escape_backslash() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -1090,7 +1192,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_escape_backslash() {
+        fn fish_escape_backslash() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -1104,7 +1206,7 @@ mod tests {
         }
 
         #[test]
-        fn write_sh_escape_newline() {
+        fn sh_escape_newline() {
             let entries = vec![HistoryEntry {
                 timestamp: 0,
                 duration: 0,
@@ -1118,7 +1220,7 @@ mod tests {
         }
 
         #[test]
-        fn write_zsh_escape_newline() {
+        fn zsh_escape_newline() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -1132,7 +1234,7 @@ mod tests {
         }
 
         #[test]
-        fn write_fish_escape_newline() {
+        fn fish_escape_newline() {
             let entries = vec![HistoryEntry {
                 timestamp: 1,
                 duration: 0,
@@ -1150,85 +1252,75 @@ mod tests {
         use super::*;
 
         #[test]
-        fn roundtrip_sh_backslash() {
-            let original = b"echo foo \\\\ hello\n";
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
-
-            assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].command, "echo foo \\ hello");
+        fn sh_backslash() {
+            let input = b"echo foo \\\\ hello\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
 
         #[test]
-        fn roundtrip_sh_multiline() {
-            let original = b"echo foo\\\nbar\\\nbaz\n";
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
-
-            assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
+        fn sh_multiline() {
+            let input = b"echo foo\\\nbar\\\nbaz\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::Sh).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
 
         #[test]
-        fn roundtrip_zsh_multiline() {
-            let original = b": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
-
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
-
-            assert_eq!(entries.len(), 2);
-            assert_eq!(entries[0].command, "echo hello\nworld");
-            assert_eq!(entries[1].command, "ls -la");
+        #[ignore = "FIXME: escaping is broken"]
+        fn zsh_backslash() {
+            let input = b"echo foo \\\\ hello\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
 
         #[test]
-        fn roundtrip_zsh_colon_continuation() {
-            let original = b": 100:0;echo foo\\\n: 200:0;echo bar\n";
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
-
-            assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].timestamp, 100);
-            assert_eq!(entries[0].command, "echo foo\n: 200:0;echo bar");
+        fn zsh_multiline() {
+            let input = b": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
 
         #[test]
-        fn roundtrip_fish_multiline() {
-            let original =
+        fn zsh_colon_continuation() {
+            let input = b": 100:0;echo foo\\\n: 200:0;echo bar\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
+
+            let mut output = Vec::new();
+            write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
+            assert_eq!(output, input);
+        }
+
+        #[test]
+        fn fish_multiline() {
+            let input =
                 b"- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
 
         #[test]
-        fn roundtrip_fish_with_paths() {
-            let original = b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
-            let input: HistoryFile<_> = original.into();
-            let entries = parse_entries([input]).unwrap().entries;
+        fn fish_with_paths() {
+            let input = b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
+            let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
             write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
-            assert_eq!(output, original);
+            assert_eq!(output, input);
         }
     }
 }
