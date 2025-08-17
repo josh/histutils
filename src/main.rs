@@ -4,9 +4,6 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::process;
 
-trait ReadSeek: BufRead {}
-impl<T: BufRead> ReadSeek for T {}
-
 fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
     let mut format: Option<ShellFormat> = None;
@@ -58,7 +55,7 @@ fn main() -> io::Result<()> {
         paths.push("-".to_string());
     }
 
-    let mut history_files: Vec<HistoryFile<Box<dyn ReadSeek>>> = Vec::new();
+    let mut history_files: Vec<HistoryFile<Box<dyn BufRead>>> = Vec::new();
     for p in paths {
         if p == "-" {
             let mut buf = Vec::new();
