@@ -164,9 +164,7 @@ where
         original_formats.insert(file_format);
 
         let entries_iter: Box<dyn Iterator<Item = IoResult<HistoryEntry>>> = match file_format {
-            ShellFormat::Fish => {
-                Box::new(parse_fish_entries(&mut reader, path)?.into_iter().map(Ok))
-            }
+            ShellFormat::Fish => Box::new(parse_fish_entries(&mut reader, path)),
             ShellFormat::ZshExtended => Box::new(parse_zsh_extended_entries(&mut reader, path)),
             ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, path)),
         };
@@ -245,7 +243,7 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-struct ShellHistLines<'a, R>
+struct RawLines<'a, R>
 where
     R: BufRead,
 {
@@ -254,7 +252,7 @@ where
     line_no: usize,
 }
 
-impl<'a, R> ShellHistLines<'a, R>
+impl<'a, R> RawLines<'a, R>
 where
     R: BufRead,
 {
@@ -267,7 +265,7 @@ where
     }
 }
 
-impl<R> Iterator for ShellHistLines<'_, R>
+impl<R> Iterator for RawLines<'_, R>
 where
     R: BufRead,
 {
@@ -276,37 +274,70 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.buf.clear();
         self.line_no += 1;
-        let start_line = self.line_no;
-
         match self.reader.read_until(b'\n', &mut self.buf) {
-            Ok(0) => return None,
-            Ok(_) => {
-                if self.buf.ends_with(b"\n") {
-                    self.buf.pop();
-                }
-            }
-            Err(e) => return Some(Err(e)),
+            Ok(0) => None,
+            Ok(_) => Some(Ok((self.buf.clone(), self.line_no))),
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+struct ShellHistLines<'a, R>
+where
+    R: BufRead,
+{
+    raw_lines: RawLines<'a, R>,
+}
+
+impl<'a, R> ShellHistLines<'a, R>
+where
+    R: BufRead,
+{
+    fn new(reader: &'a mut R) -> Self {
+        Self {
+            raw_lines: RawLines::new(reader),
+        }
+    }
+}
+
+impl<R> Iterator for ShellHistLines<'_, R>
+where
+    R: BufRead,
+{
+    type Item = IoResult<(Vec<u8>, usize)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Get the first line
+        let (mut line, start_line) = match self.raw_lines.next() {
+            Some(Ok((line, line_no))) => (line, line_no),
+            Some(Err(e)) => return Some(Err(e)),
+            None => return None,
+        };
+
+        // Remove trailing newline if present
+        if line.ends_with(b"\n") {
+            line.pop();
         }
 
-        while self.buf.ends_with(b"\\") {
-            self.buf.pop();
-            self.buf.push(b'\n');
+        // Handle backslash continuation
+        while line.ends_with(b"\\") {
+            line.pop(); // Remove the backslash
+            line.push(b'\n'); // Replace with newline
 
-            let mut next_buf = Vec::new();
-            match self.reader.read_until(b'\n', &mut next_buf) {
-                Ok(0) => break,
-                Ok(_) => {
-                    self.line_no += 1;
-                    if next_buf.ends_with(b"\n") {
-                        next_buf.pop();
+            // Read the next line
+            match self.raw_lines.next() {
+                Some(Ok((mut next_line, _))) => {
+                    if next_line.ends_with(b"\n") {
+                        next_line.pop();
                     }
-                    self.buf.extend_from_slice(&next_buf);
+                    line.extend_from_slice(&next_line);
                 }
-                Err(e) => return Some(Err(e)),
+                Some(Err(e)) => return Some(Err(e)),
+                None => break, // EOF
             }
         }
 
-        Some(Ok((self.buf.clone(), start_line)))
+        Some(Ok((line, start_line)))
     }
 }
 
@@ -397,44 +428,96 @@ fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
     }
 }
 
-fn parse_fish_entries<R>(reader: &mut R, path: &Path) -> IoResult<Vec<HistoryEntry>>
+struct FishHistEntries<'a, R>
 where
     R: BufRead,
 {
-    let mut entries = Vec::new();
-    let mut content = Vec::new();
-    reader.read_to_end(&mut content)?;
+    raw_lines: RawLines<'a, R>,
+    current_entry: Vec<u8>,
+    in_entry: bool,
+    entry_start_line: usize,
+}
 
-    let mut start = 0;
-    while let Some(pos) = content[start..].windows(6).position(|w| w == b"- cmd:") {
-        let entry_start = start + pos;
+impl<'a, R> FishHistEntries<'a, R>
+where
+    R: BufRead,
+{
+    fn new(reader: &'a mut R) -> Self {
+        Self {
+            raw_lines: RawLines::new(reader),
+            current_entry: Vec::new(),
+            in_entry: false,
+            entry_start_line: 0,
+        }
+    }
+}
 
-        // Find the next "- cmd:" or end of content
-        let next_entry = content[entry_start + 6..]
-            .windows(7)
-            .position(|w| w == b"\n- cmd:")
-            .map_or(content.len(), |p| entry_start + 6 + p + 1);
+impl<R> Iterator for FishHistEntries<'_, R>
+where
+    R: BufRead,
+{
+    type Item = IoResult<(Vec<u8>, usize)>;
 
-        // Calculate line number by counting newlines up to entry_start
-        let lineno = content[..entry_start]
-            .iter()
-            .copied()
-            .filter(|&b| b == b'\n')
-            .count()
-            + 1;
-
-        let entry_data = &content[entry_start..next_entry];
-        match parse_fish_raw_entry(entry_data) {
-            Ok(entry) => entries.push(entry),
-            Err(err) => {
-                eprintln!("{}:{lineno}: {err}", path.display());
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.raw_lines.next() {
+                Some(Ok((line, line_no))) => {
+                    if line.starts_with(b"- cmd:") {
+                        // Start of new entry
+                        if self.in_entry && !self.current_entry.is_empty() {
+                            // Return previous entry
+                            let entry = self.current_entry.clone();
+                            let entry_line = self.entry_start_line;
+                            self.current_entry.clear();
+                            self.current_entry.extend_from_slice(&line);
+                            self.entry_start_line = line_no;
+                            return Some(Ok((entry, entry_line)));
+                        }
+                        // First entry
+                        self.in_entry = true;
+                        self.current_entry.clear();
+                        self.current_entry.extend_from_slice(&line);
+                        self.entry_start_line = line_no;
+                    } else if self.in_entry {
+                        // Continue current entry
+                        self.current_entry.extend_from_slice(&line);
+                    }
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => {
+                    // EOF
+                    if self.in_entry && !self.current_entry.is_empty() {
+                        let entry = self.current_entry.clone();
+                        let entry_line = self.entry_start_line;
+                        self.current_entry.clear();
+                        self.in_entry = false;
+                        return Some(Ok((entry, entry_line)));
+                    }
+                    return None;
+                }
             }
         }
-
-        start = next_entry;
     }
+}
 
-    Ok(entries)
+fn parse_fish_entries<'a, R>(
+    reader: &'a mut R,
+    path: &Path,
+) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
+where
+    R: BufRead,
+{
+    let path = path.to_owned();
+    FishHistEntries::new(reader).filter_map(move |entry_res| match entry_res {
+        Ok((entry_data, lineno)) => match parse_fish_raw_entry(&entry_data) {
+            Ok(entry) => Some(Ok(entry)),
+            Err(err) => {
+                eprintln!("{}:{lineno}: {err}", path.display());
+                None
+            }
+        },
+        Err(err) => Some(Err(err)),
+    })
 }
 
 fn parse_fish_raw_entry(data: &[u8]) -> Result<HistoryEntry, ParseError> {
