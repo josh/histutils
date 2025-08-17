@@ -1,4 +1,4 @@
-use histutils::{HistoryFile, ShellFormat, parse_entries_and_format, write_entries};
+use histutils::{HistoryFile, ShellFormat, parse_entries, write_entries};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -73,11 +73,12 @@ fn main() -> io::Result<()> {
         })
         .collect::<io::Result<Vec<_>>>()?;
 
-    let (entries, detected_format) = parse_entries_and_format(history_files)?;
+    let history = parse_entries(history_files)?;
 
     if count {
-        println!("{}", entries.len());
+        println!("{}", history.entries.len());
     } else {
+        let detected_format = history.primary_format();
         format = format.or(detected_format);
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");
@@ -85,7 +86,7 @@ fn main() -> io::Result<()> {
         }
 
         let mut stdout = io::stdout();
-        write_entries(&mut stdout, entries, format.unwrap())?;
+        write_entries(&mut stdout, history.entries, format.unwrap())?;
     }
 
     Ok(())

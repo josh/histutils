@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, Cursor, Error, ErrorKind, Result as IoResult, Write};
 use std::iter::Peekable;
 use std::path::{Path, PathBuf};
@@ -12,11 +12,31 @@ pub struct HistoryEntry {
     pub paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShellFormat {
     Sh,
     ZshExtended,
     Fish,
+}
+
+#[derive(Debug)]
+pub struct HistoryEntries {
+    pub entries: Vec<HistoryEntry>,
+    pub original_formats: HashSet<ShellFormat>,
+}
+
+impl HistoryEntries {
+    /// Returns the primary format if there's exactly one format, otherwise None.
+    ///
+    /// This is useful for determining if all input files used the same shell format.
+    #[must_use]
+    pub fn primary_format(&self) -> Option<ShellFormat> {
+        if self.original_formats.len() == 1 {
+            self.original_formats.iter().copied().next()
+        } else {
+            None
+        }
+    }
 }
 
 /// A history file containing a reader and optional path information.
@@ -66,40 +86,7 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
     }
 }
 
-/// Parses and merges history entries from multiple readers.
-///
-/// This function reads shell history from multiple sources, parses the entries,
-/// and merges them into a single timestamp sorted collection.
-///
-/// # Arguments
-///
-/// * `readers` - An iterator of tuples containing a reader and its associated
-///   path. The reader must implement `Read` and the path must implement
-///   `AsRef<Path>`. The path is used for error reporting and format detection.
-///
-/// # Examples
-///
-/// ```
-/// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
-/// let fish_history: histutils::HistoryFile<_> = "- cmd: pwd\n  when: 1609459250\n".into();
-///
-/// let entries = histutils::parse_entries([zsh_history, fish_history]).unwrap();
-/// assert_eq!(entries.len(), 3);
-/// ```
-///
-/// # Errors
-///
-/// Returns an error if reading from any reader fails.
-pub fn parse_entries<R, I>(readers: I) -> IoResult<Vec<HistoryEntry>>
-where
-    R: BufRead,
-    I: IntoIterator<Item = HistoryFile<R>>,
-{
-    let (entries, _format) = parse_entries_and_format(readers)?;
-    Ok(entries)
-}
-
-/// Parses history entries from multiple files and detects their format.
+/// Parses history entries from multiple files.
 ///
 /// This function combines format detection and entry parsing into a single
 /// operation. It first detects the shell format used by the history files,
@@ -115,52 +102,34 @@ where
 /// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
 /// let bash_history: histutils::HistoryFile<_> = "echo world\nls\n".into();
 ///
-/// let (entries, format) = histutils::parse_entries_and_format([zsh_history, bash_history]).unwrap();
-/// assert!(entries.len() >= 2);
-/// assert!(format.is_none()); // Mixed formats return None
+/// let history = histutils::parse_entries([zsh_history, bash_history]).unwrap();
+/// assert!(history.entries.len() >= 2);
+/// assert!(history.original_formats.len() == 2); // Mixed formats
 /// ```
 ///
 /// # Returns
 ///
-/// Returns a tuple containing:
-/// - A vector of parsed and merged `HistoryEntry` instances, sorted by timestamp
-/// - An optional `ShellFormat` indicating the detected format, or `None` if
-///   multiple formats are detected or no format can be determined
+/// Returns parsed `HistoryEntries` struct.
 ///
 /// # Errors
 ///
 /// Returns an error if reading from any file fails or if invalid metadata
 /// is encountered in extended shell formats.
-pub fn parse_entries_and_format<R, I>(
-    files: I,
-) -> IoResult<(Vec<HistoryEntry>, Option<ShellFormat>)>
+pub fn parse_entries<R, I>(files: I) -> IoResult<HistoryEntries>
 where
     R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
 {
     let mut map: BTreeMap<u64, Vec<HistoryEntry>> = BTreeMap::new();
-    let mut detected_format: Option<ShellFormat> = None;
+    let mut original_formats = HashSet::new();
 
     for history_file in files {
         let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
         let mut lines = ByteLines::new(history_file.reader).peekable();
 
-        // Detect format from first line of this file
         let file_format = detect_format_from_lines(&mut lines);
+        original_formats.insert(file_format);
 
-        // Check if this format is consistent with previously detected format
-        match detected_format {
-            None => detected_format = Some(file_format),
-            Some(existing) if existing == file_format => {
-                // Consistent format, continue
-            }
-            Some(_) => {
-                // Mixed formats detected, set to None and continue parsing
-                detected_format = None;
-            }
-        }
-
-        // Parse entries from this file using the detected format
         let entries_result = match file_format {
             ShellFormat::Fish => parse_fish_format(&mut lines, Some(path)),
             ShellFormat::ZshExtended => parse_zsh_extended_format(&mut lines, Some(path)),
@@ -183,7 +152,11 @@ where
     }
 
     let entries = map.into_iter().flat_map(|(_, v)| v).collect();
-    Ok((entries, detected_format))
+
+    Ok(HistoryEntries {
+        entries,
+        original_formats,
+    })
 }
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
@@ -737,29 +710,29 @@ mod tests {
     #[test]
     fn detect_format_none() {
         let readers: Vec<HistoryFile<Cursor<&[u8]>>> = Vec::new();
-        let (_entries, fmt) = parse_entries_and_format(readers).unwrap();
-        assert_eq!(fmt, None);
+        let result = parse_entries(readers).unwrap();
+        assert_eq!(result.primary_format(), None);
     }
 
     #[test]
     fn detect_format_one_sh() {
         let history_file: HistoryFile<_> = "echo hello\n".into();
-        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::Sh));
+        let result = parse_entries([history_file]).unwrap();
+        assert_eq!(result.primary_format(), Some(ShellFormat::Sh));
     }
 
     #[test]
     fn detect_format_one_zsh() {
         let history_file: HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::ZshExtended));
+        let result = parse_entries([history_file]).unwrap();
+        assert_eq!(result.primary_format(), Some(ShellFormat::ZshExtended));
     }
 
     #[test]
     fn detect_format_one_fish() {
         let history_file: HistoryFile<_> = "- cmd: echo hello\n  when: 1234567890\n".into();
-        let (_entries, fmt) = parse_entries_and_format([history_file]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::Fish));
+        let result = parse_entries([history_file]).unwrap();
+        assert_eq!(result.primary_format(), Some(ShellFormat::Fish));
     }
 
     #[test]
@@ -767,8 +740,8 @@ mod tests {
         let h1: HistoryFile<_> = "echo foo\n".into();
         let h2: HistoryFile<_> = "echo bar\n".into();
         let h3: HistoryFile<_> = "echo baz\n".into();
-        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::Sh));
+        let result = parse_entries([h1, h2, h3]).unwrap();
+        assert_eq!(result.primary_format(), Some(ShellFormat::Sh));
     }
 
     #[test]
@@ -776,8 +749,8 @@ mod tests {
         let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
         let h2: HistoryFile<_> = ": 1234567892:0;echo bar\n".into();
         let h3: HistoryFile<_> = ": 1234567893:0;echo baz\n".into();
-        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::ZshExtended));
+        let result = parse_entries([h1, h2, h3]).unwrap();
+        assert_eq!(result.primary_format(), Some(ShellFormat::ZshExtended));
     }
 
     #[test]
@@ -785,22 +758,22 @@ mod tests {
         let h1: HistoryFile<_> = "- cmd: echo foo\n  when: 1234567891\n".into();
         let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
         let h3: HistoryFile<_> = "- cmd: echo baz\n  when: 1234567893\n".into();
-        let (_entries, fmt) = parse_entries_and_format([h1, h2, h3]).unwrap();
-        assert_eq!(fmt, Some(ShellFormat::Fish));
+        let history = parse_entries([h1, h2, h3]).unwrap();
+        assert_eq!(history.primary_format(), Some(ShellFormat::Fish));
     }
 
     #[test]
     fn detect_format_mixed() {
         let h1: HistoryFile<_> = ": 1234567891:0;echo foo\n".into();
         let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
-        let (_entries, fmt) = parse_entries_and_format([h1, h2]).unwrap();
-        assert_eq!(fmt, None);
+        let result = parse_entries([h1, h2]).unwrap();
+        assert_eq!(result.primary_format(), None);
     }
 
     #[test]
     fn parse_simple_entry() {
         let input: HistoryFile<_> = "echo hello\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello");
@@ -809,7 +782,7 @@ mod tests {
     #[test]
     fn parse_simple_entries() {
         let input: HistoryFile<_> = "echo hello\nls -la\npwd\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].command, "echo hello");
@@ -820,7 +793,7 @@ mod tests {
     #[test]
     fn parse_simple_multiline_entry() {
         let input: HistoryFile<_> = "echo hello\\\nanother\\\nline\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo hello\nanother\nline");
@@ -829,7 +802,7 @@ mod tests {
     #[test]
     fn parse_extended_entries() {
         let input: HistoryFile<_> = ": 1700000001:0;echo hello\n: 1700000002:5;ls -la\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 2);
 
@@ -845,7 +818,7 @@ mod tests {
     #[test]
     fn parse_fish_entry_basic() {
         let input: HistoryFile<_> = "- cmd: cargo build\n  when: 1700000000\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1_700_000_000);
@@ -857,7 +830,7 @@ mod tests {
         let input: HistoryFile<_> =
             "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n"
                 .into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].paths, vec!["~/Developer/histutils".to_string()]);
@@ -866,7 +839,7 @@ mod tests {
     #[test]
     fn parse_fish_entry_multiple_paths() {
         let input: HistoryFile<_> = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n    - ~/project2\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -878,7 +851,7 @@ mod tests {
     #[test]
     fn parse_fish_entry_paths_then_new_entry() {
         let input: HistoryFile<_> = "- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/project1\n- cmd: echo hi\n  when: 1700000001\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].paths, vec!["~/project1".to_string()]);
@@ -889,7 +862,7 @@ mod tests {
     fn parse_fish_multiline_command() {
         let input: HistoryFile<_> =
             "- cmd: echo \"hello\\nmultiline\\nstring\"\n  when: 1700000000\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo \"hello\nmultiline\nstring\"");
@@ -899,7 +872,7 @@ mod tests {
     fn parse_fish_colon_in_command() {
         let input: HistoryFile<_> =
             "- cmd: git commit -m \"Test: something\"\n  when: 1516464765\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1_516_464_765);
@@ -909,14 +882,14 @@ mod tests {
     #[test]
     fn parse_reader_ignores_invalid_and_empty() {
         let input: HistoryFile<_> = ": invalid\n\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
         assert!(entries.is_empty());
     }
 
     #[test]
     fn parse_reader_handles_invalid_utf8_in_command() {
         let input: HistoryFile<_> = b": 1:0;ok\n: 2:0;bad\xff\n: 3:0;again\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1].command, "bad\u{FFFD}");
     }
@@ -925,7 +898,7 @@ mod tests {
     fn parse_reader_handles_invalid_utf8_in_fish_command() {
         let input: HistoryFile<_> =
             b"- cmd: foo\n  when: 1\n- cmd: bad\xff\n  when: 2\n- cmd: bar\n  when: 3\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1].command, "bad\u{FFFD}");
     }
@@ -948,7 +921,7 @@ mod tests {
     fn parse_readers_sorts_by_timestamp() {
         let h1: HistoryFile<_> = ": 2:0;two\n".into();
         let h2: HistoryFile<_> = ": 1:0;one\n".into();
-        let entries = parse_entries([h1, h2]).expect("should parse");
+        let entries = parse_entries([h1, h2]).unwrap().entries;
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[1].timestamp, 2);
@@ -958,7 +931,7 @@ mod tests {
     fn parse_readers_preserves_order_with_same_timestamp() {
         let h1: HistoryFile<_> = ": 100:0;b\n".into();
         let h2: HistoryFile<_> = ": 100:0;a\n".into();
-        let entries = parse_entries([h1, h2]).expect("should parse");
+        let entries = parse_entries([h1, h2]).unwrap().entries;
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "b");
         assert_eq!(entries[1].command, "a");
@@ -968,7 +941,7 @@ mod tests {
     fn parse_readers_deduplicates_exact_matches() {
         let h1: HistoryFile<_> = ": 1:0;one\n".into();
         let h2: HistoryFile<_> = ": 1:0;one\n".into();
-        let entries = parse_entries([h1, h2]).expect("should parse");
+        let entries = parse_entries([h1, h2]).unwrap().entries;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 1);
         assert_eq!(entries[0].command, "one");
@@ -978,7 +951,7 @@ mod tests {
     fn parse_readers_keeps_zero_timestamp_duplicates() {
         let h1: HistoryFile<_> = "echo hi\n".into();
         let h2: HistoryFile<_> = "echo hi\n".into();
-        let entries = parse_entries([h1, h2]).expect("should parse");
+        let entries = parse_entries([h1, h2]).expect("should parse").entries;
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].timestamp, 0);
         assert_eq!(entries[1].timestamp, 0);
@@ -990,7 +963,7 @@ mod tests {
     fn parse_readers_merges_entries_with_richer_info() {
         let zsh: HistoryFile<_> = ": 1000:5;echo hello\n".into();
         let fish: HistoryFile<_> = "- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n".into();
-        let entries = parse_entries([zsh, fish]).expect("should parse");
+        let entries = parse_entries([zsh, fish]).unwrap().entries;
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.timestamp, 1000);
@@ -1004,7 +977,7 @@ mod tests {
         let sh: HistoryFile<_> = "echo sh\n".into();
         let zsh: HistoryFile<_> = ": 1:0;echo zsh\n".into();
         let fish: HistoryFile<_> = "- cmd: echo fish\n  when: 2\n".into();
-        let entries = parse_entries([sh, zsh, fish]).expect("should parse");
+        let entries = parse_entries([sh, zsh, fish]).unwrap().entries;
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].command, "echo sh");
@@ -1019,7 +992,7 @@ mod tests {
     fn parse_fish_entry_handles_escapes() {
         let input: HistoryFile<_> =
             "- cmd: first\\nsecond\\\\third\\x\n  when: 1700000000\n".into();
-        let entries = parse_entries([input]).expect("should parse");
+        let entries = parse_entries([input]).unwrap().entries;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "first\nsecond\\third\\x");
     }
@@ -1257,7 +1230,7 @@ mod tests {
     fn roundtrip_sh_backslash() {
         let original = b"echo foo \\\\ hello\n";
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo foo \\ hello");
@@ -1271,7 +1244,7 @@ mod tests {
     fn roundtrip_sh_multiline() {
         let original = b"echo foo\\\nbar\\\nbaz\n";
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, "echo foo\nbar\nbaz");
@@ -1286,7 +1259,7 @@ mod tests {
         let original = b": 1700000001:0;echo hello\\\nworld\n: 1700000002:5;ls -la\n";
 
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "echo hello\nworld");
@@ -1301,7 +1274,7 @@ mod tests {
     fn roundtrip_zsh_colon_continuation() {
         let original = b": 100:0;echo foo\\\n: 200:0;echo bar\n";
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp, 100);
@@ -1317,7 +1290,7 @@ mod tests {
         let original =
             b"- cmd: echo hello\\nworld\n  when: 1700000001\n- cmd: ls\n  when: 1700000002\n";
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
@@ -1328,7 +1301,7 @@ mod tests {
     fn roundtrip_fish_with_paths() {
         let original = b"- cmd: cargo build\n  when: 1700000000\n  paths:\n    - ~/Developer/histutils\n- cmd: ls\n  when: 1700000001\n";
         let input: HistoryFile<_> = original.into();
-        let entries = parse_entries([input]).unwrap();
+        let entries = parse_entries([input]).unwrap().entries;
 
         let mut output = Vec::new();
         write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
