@@ -355,7 +355,9 @@ where
             s.to_string()
         } else {
             eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-            String::from_utf8_lossy(&line).to_string()
+            let lossy = String::from_utf8_lossy(&line);
+            eprintln!("{lossy}");
+            lossy.to_string()
         };
         Ok(HistoryEntry {
             timestamp: 0,
@@ -417,7 +419,9 @@ fn parse_zsh_raw_entry(
         s.to_string()
     } else {
         eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-        String::from_utf8_lossy(cmd_bytes).to_string()
+        let lossy = String::from_utf8_lossy(cmd_bytes);
+        eprintln!("{lossy}");
+        lossy.to_string()
     };
 
     Ok(HistoryEntry {
@@ -539,7 +543,9 @@ fn parse_fish_raw_entry(
         unescape_fish(s)
     } else {
         eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-        unescape_fish(&String::from_utf8_lossy(cmd_bytes))
+        let lossy = String::from_utf8_lossy(cmd_bytes);
+        eprintln!("{lossy}");
+        unescape_fish(&lossy)
     };
 
     if lines.len() < 2 {
