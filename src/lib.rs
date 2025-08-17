@@ -326,7 +326,7 @@ where
         let (line, lineno) = entry_res?;
         match parse_zsh_raw_entry(&line) {
             Ok(entry) => entries.push(entry),
-            Err(err) => eprintln!("{path:?}:{lineno}: {err}"),
+            Err(err) => eprintln!("{}:{lineno}: {err}", path.display()),
         }
     }
 
@@ -392,13 +392,13 @@ where
         let next_entry = content[entry_start + 6..]
             .windows(7)
             .position(|w| w == b"\n- cmd:")
-            .map(|p| entry_start + 6 + p + 1)
-            .unwrap_or(content.len());
+            .map_or(content.len(), |p| entry_start + 6 + p + 1);
 
         // Calculate line number by counting newlines up to entry_start
         let lineno = content[..entry_start]
             .iter()
-            .filter(|&&b| b == b'\n')
+            .copied()
+            .filter(|&b| b == b'\n')
             .count()
             + 1;
 
@@ -406,7 +406,7 @@ where
         match parse_fish_raw_entry(entry_data) {
             Ok(entry) => entries.push(entry),
             Err(err) => {
-                eprintln!("{path:?}:{lineno}: {err}");
+                eprintln!("{}:{lineno}: {err}", path.display());
             }
         }
 
