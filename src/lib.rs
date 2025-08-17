@@ -21,7 +21,8 @@ pub enum ShellFormat {
 
 /// A history file containing a reader and optional path information.
 ///
-/// The reader must implement [`BufRead`] for line-by-line reading.
+/// The reader must implement both `BufRead` for line-by-line reading and
+/// `Seek` for repositioning within the file.
 #[derive(Debug)]
 pub struct HistoryFile<R>
 where
@@ -140,12 +141,12 @@ where
     let mut map: BTreeMap<u64, Vec<HistoryEntry>> = BTreeMap::new();
     let mut detected_format: Option<ShellFormat> = None;
 
-    for mut history_file in files {
-        // Peek at the first line to detect the format without consuming it
-        let file_format = detect_format(&mut history_file);
+    for history_file in files {
         let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
-
         let mut lines = ByteLines::new(history_file.reader).peekable();
+
+        // Detect format from first line of this file
+        let file_format = detect_format_from_lines(&mut lines);
 
         // Check if this format is consistent with previously detected format
         match detected_format {
@@ -216,22 +217,14 @@ fn detect_format_line(first_line: &[u8]) -> ShellFormat {
     }
 }
 
-/// Detect the shell history format by peeking at the first line of the file's reader.
-///
-/// This function inspects the underlying buffer using [`BufRead::fill_buf`] and
-/// does not consume any bytes, allowing the caller to read from the start
-/// afterwards. The [`HistoryFile`]'s path may be used for detection in the
-/// future.
-pub fn detect_format<R: BufRead>(file: &mut HistoryFile<R>) -> ShellFormat {
-    match file.reader.fill_buf() {
-        Ok(buf) => {
-            let line = match buf.iter().position(|&b| b == b'\n') {
-                Some(pos) => &buf[..pos],
-                None => buf,
-            };
-            detect_format_line(line)
-        }
-        Err(_) => ShellFormat::Sh,
+fn detect_format_from_lines<I>(lines: &mut Peekable<I>) -> ShellFormat
+where
+    I: Iterator<Item = IoResult<Vec<u8>>>,
+{
+    if let Some(Ok(first_line)) = lines.peek() {
+        detect_format_line(first_line)
+    } else {
+        ShellFormat::Sh
     }
 }
 
@@ -802,36 +795,6 @@ mod tests {
         let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
         let (_entries, fmt) = parse_entries_and_format([h1, h2]).unwrap();
         assert_eq!(fmt, None);
-    }
-
-    #[test]
-    fn detect_format_helper_sh() {
-        let mut file: HistoryFile<_> = "echo hello\n".into();
-        assert_eq!(detect_format(&mut file), ShellFormat::Sh);
-    }
-
-    #[test]
-    fn detect_format_helper_zsh() {
-        let mut file: HistoryFile<_> = ": 1:0;echo\n".into();
-        assert_eq!(detect_format(&mut file), ShellFormat::ZshExtended);
-    }
-
-    #[test]
-    fn detect_format_helper_fish() {
-        let mut file: HistoryFile<_> = "- cmd: echo\n  when: 1\n".into();
-        assert_eq!(detect_format(&mut file), ShellFormat::Fish);
-    }
-
-    #[test]
-    fn detect_format_does_not_consume() {
-        let data = b"echo hello\n";
-        let mut file = HistoryFile {
-            reader: Cursor::new(&data[..]),
-            path: None,
-        };
-        assert_eq!(detect_format(&mut file), ShellFormat::Sh);
-        let mut lines = ByteLines::new(file.reader);
-        assert_eq!(lines.next().unwrap().unwrap(), b"echo hello");
     }
 
     #[test]
