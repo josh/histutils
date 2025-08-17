@@ -86,6 +86,37 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
     }
 }
 
+/// Detects the shell format of BufRead type.
+///
+/// # Examples
+///
+/// ```
+/// let mut reader = std::io::Cursor::new(b": 1234:0;echo hello\n");
+/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::ZshExtended);
+///
+/// let mut reader = std::io::Cursor::new(b"- cmd: echo hello\n  when: 1234\n");
+/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Fish);
+///
+/// let mut reader = std::io::Cursor::new(b"echo hello\n");
+/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Sh);
+/// ```
+///
+/// # Returns
+/// The detected shell format.
+pub fn detect_format<R>(reader: &mut R) -> ShellFormat
+where
+    R: BufRead,
+{
+    let buf = reader.fill_buf().unwrap_or(&[]);
+    if buf.starts_with(b"- cmd:") {
+        ShellFormat::Fish
+    } else if buf.starts_with(b":") {
+        ShellFormat::ZshExtended
+    } else {
+        ShellFormat::Sh
+    }
+}
+
 /// Parses history entries from multiple files.
 ///
 /// This function combines format detection and entry parsing into a single
@@ -126,6 +157,10 @@ where
     for history_file in files {
         let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
         let mut reader = history_file.reader;
+
+        let file_format = detect_format(&mut reader);
+        original_formats.insert(file_format);
+
         let mut buf = Vec::new();
         let mut lines = std::iter::from_fn(move || {
             buf.clear();
@@ -144,9 +179,6 @@ where
             }
         })
         .peekable();
-
-        let file_format = detect_format_from_lines(&mut lines);
-        original_formats.insert(file_format);
 
         let entries_result = match file_format {
             ShellFormat::Fish => parse_fish_format(&mut lines, Some(path)),
@@ -195,28 +227,6 @@ fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
         }
     }
     a
-}
-
-fn detect_format_line(first_line: &[u8]) -> ShellFormat {
-    let first_line = trim_start(first_line);
-    if first_line.starts_with(b"- cmd:") {
-        ShellFormat::Fish
-    } else if first_line.starts_with(b":") {
-        ShellFormat::ZshExtended
-    } else {
-        ShellFormat::Sh
-    }
-}
-
-fn detect_format_from_lines<I>(lines: &mut Peekable<I>) -> ShellFormat
-where
-    I: Iterator<Item = IoResult<Vec<u8>>>,
-{
-    if let Some(Ok(first_line)) = lines.peek() {
-        detect_format_line(first_line)
-    } else {
-        ShellFormat::Sh
-    }
 }
 
 fn parse_sh_format<I>(lines: &mut Peekable<I>, path: Option<&Path>) -> IoResult<Vec<HistoryEntry>>
