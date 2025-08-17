@@ -468,6 +468,30 @@ fn parse_sh_line_bytes(line: &[u8]) -> Option<(HistoryEntry, bool)> {
     ))
 }
 
+fn unescape_command(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                match next {
+                    'n' => out.push('\n'),
+                    '\\' => out.push('\\'),
+                    other => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                }
+            } else {
+                out.push('\\');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn unescape_fish(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -645,30 +669,6 @@ fn escape_command(s: &str) -> String {
             '\n' => out.push_str("\\\n"),
             '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
-        }
-    }
-    out
-}
-
-fn unescape_command(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(next) = chars.next() {
-                match next {
-                    'n' => out.push('\n'),
-                    '\\' => out.push('\\'),
-                    other => {
-                        out.push('\\');
-                        out.push(other);
-                    }
-                }
-            } else {
-                out.push('\\');
-            }
-        } else {
-            out.push(ch);
         }
     }
     out
