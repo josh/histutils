@@ -163,13 +163,16 @@ where
         let file_format = detect_format(&mut reader);
         original_formats.insert(file_format);
 
-        let entries_result = match file_format {
-            ShellFormat::Fish => parse_fish_entries(&mut reader, path),
-            ShellFormat::ZshExtended => parse_zsh_extended_entries(&mut reader, path),
-            ShellFormat::Sh => parse_sh_entries(&mut reader, path),
+        let entries_iter: Box<dyn Iterator<Item = IoResult<HistoryEntry>>> = match file_format {
+            ShellFormat::Fish => {
+                Box::new(parse_fish_entries(&mut reader, path)?.into_iter().map(Ok))
+            }
+            ShellFormat::ZshExtended => Box::new(parse_zsh_extended_entries(&mut reader, path)),
+            ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, path)),
         };
 
-        for entry in entries_result? {
+        for entry_result in entries_iter {
+            let entry = entry_result?;
             let entries = map.entry(entry.timestamp).or_default();
             if entry.timestamp == 0 {
                 entries.push(entry);
@@ -242,97 +245,114 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-fn iter_sh_raw_entries<R>(reader: &mut R) -> impl Iterator<Item = IoResult<(Vec<u8>, usize)>> + '_
+struct ShellHistLines<'a, R>
 where
     R: BufRead,
 {
-    let mut buf = Vec::new();
-    let mut line_no: usize = 0;
+    reader: &'a mut R,
+    buf: Vec<u8>,
+    line_no: usize,
+}
 
-    std::iter::from_fn(move || {
-        buf.clear();
-        line_no += 1;
-        let start_line = line_no;
+impl<'a, R> ShellHistLines<'a, R>
+where
+    R: BufRead,
+{
+    fn new(reader: &'a mut R) -> Self {
+        Self {
+            reader,
+            buf: Vec::new(),
+            line_no: 0,
+        }
+    }
+}
 
-        match reader.read_until(b'\n', &mut buf) {
+impl<R> Iterator for ShellHistLines<'_, R>
+where
+    R: BufRead,
+{
+    type Item = IoResult<(Vec<u8>, usize)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.buf.clear();
+        self.line_no += 1;
+        let start_line = self.line_no;
+
+        match self.reader.read_until(b'\n', &mut self.buf) {
             Ok(0) => return None,
             Ok(_) => {
-                if buf.ends_with(b"\n") {
-                    buf.pop();
+                if self.buf.ends_with(b"\n") {
+                    self.buf.pop();
                 }
             }
             Err(e) => return Some(Err(e)),
         }
 
-        while buf.ends_with(b"\\") {
-            buf.pop();
-            buf.push(b'\n');
+        while self.buf.ends_with(b"\\") {
+            self.buf.pop();
+            self.buf.push(b'\n');
 
             let mut next_buf = Vec::new();
-            match reader.read_until(b'\n', &mut next_buf) {
+            match self.reader.read_until(b'\n', &mut next_buf) {
                 Ok(0) => break,
                 Ok(_) => {
-                    line_no += 1;
+                    self.line_no += 1;
                     if next_buf.ends_with(b"\n") {
                         next_buf.pop();
                     }
-                    buf.extend_from_slice(&next_buf);
+                    self.buf.extend_from_slice(&next_buf);
                 }
                 Err(e) => return Some(Err(e)),
             }
         }
 
-        Some(Ok((buf.clone(), start_line)))
+        Some(Ok((self.buf.clone(), start_line)))
+    }
+}
+
+fn parse_sh_entries<'a, R>(
+    reader: &'a mut R,
+    path: &Path,
+) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
+where
+    R: BufRead,
+{
+    let path = path.to_owned();
+    ShellHistLines::new(reader).map(move |entry_res| {
+        let (line, lineno) = entry_res?;
+        let command = if let Ok(s) = str::from_utf8(&line) {
+            s.to_string()
+        } else {
+            eprintln!("{}:{lineno}: invalid UTF-8", path.display());
+            String::from_utf8_lossy(&line).to_string()
+        };
+        Ok(HistoryEntry {
+            timestamp: 0,
+            duration: 0,
+            command,
+            paths: vec![],
+        })
     })
 }
 
-fn parse_sh_entries<R>(reader: &mut R, path: &Path) -> IoResult<Vec<HistoryEntry>>
+fn parse_zsh_extended_entries<'a, R>(
+    reader: &'a mut R,
+    path: &Path,
+) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
 where
     R: BufRead,
 {
-    let mut entries = Vec::new();
-
-    for entry_res in iter_sh_raw_entries(reader) {
-        let (line, lineno) = entry_res?;
-        if let Ok(s) = str::from_utf8(&line) {
-            let command = s.to_string();
-            entries.push(HistoryEntry {
-                timestamp: 0,
-                duration: 0,
-                command,
-                paths: Vec::new(),
-            });
-        } else {
-            let s = String::from_utf8_lossy(&line);
-            eprintln!("warning: invalid UTF-8 {}:{lineno}: {s}", path.display());
-            let command = s.to_string();
-            entries.push(HistoryEntry {
-                timestamp: 0,
-                duration: 0,
-                command,
-                paths: Vec::new(),
-            });
-        }
-    }
-
-    Ok(entries)
-}
-
-fn parse_zsh_extended_entries<R>(reader: &mut R, path: &Path) -> IoResult<Vec<HistoryEntry>>
-where
-    R: BufRead,
-{
-    let mut entries = Vec::new();
-
-    for entry_res in iter_sh_raw_entries(reader) {
-        let (line, lineno) = entry_res?;
-        match parse_zsh_raw_entry(&line) {
-            Ok(entry) => entries.push(entry),
-            Err(err) => eprintln!("{}:{lineno}: {err}", path.display()),
-        }
-    }
-
-    Ok(entries)
+    let path = path.to_owned();
+    ShellHistLines::new(reader).filter_map(move |entry_res| match entry_res {
+        Ok((line, lineno)) => match parse_zsh_raw_entry(&line) {
+            Ok(entry) => Some(Ok(entry)),
+            Err(err) => {
+                eprintln!("{}:{lineno}: {err}", path.display());
+                None
+            }
+        },
+        Err(err) => Some(Err(err)),
+    })
 }
 
 fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
@@ -367,8 +387,7 @@ fn parse_zsh_raw_entry(line: &[u8]) -> Result<HistoryEntry, ParseError> {
             paths: Vec::new(),
         })
     } else {
-        let s = String::from_utf8_lossy(cmd_bytes);
-        let command = s.to_string();
+        let command = String::from_utf8_lossy(cmd_bytes).to_string();
         Ok(HistoryEntry {
             timestamp,
             duration,
@@ -752,6 +771,54 @@ mod tests {
             let h2: HistoryFile<_> = "- cmd: echo bar\n  when: 1234567892\n".into();
             let result = parse_entries([h1, h2]).unwrap();
             assert_eq!(result.primary_format(), None);
+        }
+    }
+
+    mod parse_sh_entries {
+        use super::parse_sh_entries;
+        use std::{io::Cursor, path::PathBuf};
+
+        #[test]
+        fn empty() {
+            let mut input = Cursor::new("");
+            let path = PathBuf::from(".history");
+            let mut entries = parse_sh_entries(&mut input, &path);
+            assert!(entries.next().is_none());
+        }
+
+        #[test]
+        fn multiple() {
+            let mut input = Cursor::new("foo\nbar\nbaz\n");
+            let path = PathBuf::from(".history");
+            let mut entries = parse_sh_entries(&mut input, &path);
+            assert_eq!("foo", entries.next().unwrap().unwrap().command);
+            assert_eq!("bar", entries.next().unwrap().unwrap().command);
+            assert_eq!("baz", entries.next().unwrap().unwrap().command);
+            assert!(entries.next().is_none());
+        }
+    }
+
+    mod parse_zsh_extended_entries {
+        use super::parse_zsh_extended_entries;
+        use std::{io::Cursor, path::PathBuf};
+
+        #[test]
+        fn empty() {
+            let mut input = Cursor::new("");
+            let path = PathBuf::from(".zsh_history");
+            let mut entries = parse_zsh_extended_entries(&mut input, &path);
+            assert!(entries.next().is_none());
+        }
+
+        #[test]
+        fn multiple() {
+            let mut input = Cursor::new(": 1:0;foo\n: 2:0;bar\n: 3:0;baz\n");
+            let path = PathBuf::from(".zsh_history");
+            let mut entries = parse_zsh_extended_entries(&mut input, &path);
+            assert_eq!("foo", entries.next().unwrap().unwrap().command);
+            assert_eq!("bar", entries.next().unwrap().unwrap().command);
+            assert_eq!("baz", entries.next().unwrap().unwrap().command);
+            assert!(entries.next().is_none());
         }
     }
 
