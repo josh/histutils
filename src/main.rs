@@ -1,4 +1,4 @@
-use histutils::{HistoryFile, ShellFormat, parse_entries_and_format, write_entries};
+use histutils::{HistoryFile, ShellFormat, detect_format, parse_entries, write_entries};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
@@ -76,12 +76,27 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let (entries, detected_format) = parse_entries_and_format(history_files)?;
+    if format.is_none() {
+        let mut detected: Option<ShellFormat> = None;
+        for hf in &mut history_files {
+            let fmt = detect_format(hf);
+            match detected {
+                None => detected = Some(fmt),
+                Some(existing) if existing == fmt => {}
+                Some(_) => {
+                    detected = None;
+                    break;
+                }
+            }
+        }
+        format = detected;
+    }
+
+    let entries = parse_entries(history_files)?;
 
     if count {
         println!("{}", entries.len());
     } else {
-        format = format.or(detected_format);
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");
             process::exit(1);
