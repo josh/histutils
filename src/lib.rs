@@ -1272,9 +1272,8 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "FIXME: escaping is broken"]
         fn zsh_backslash() {
-            let input = b"echo foo \\\\ hello\n";
+            let input = b": 1:0;echo foo \\\\ hello\n";
             let entries = parse_entries([input.into()]).unwrap().entries;
 
             let mut output = Vec::new();
