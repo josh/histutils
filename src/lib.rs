@@ -885,7 +885,8 @@ mod tests {
         #[test]
         fn parse_readers_merges_entries_with_richer_info() {
             let zsh: HistoryFile<_> = ": 1000:5;echo hello\n".into();
-            let fish: HistoryFile<_> = "- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n".into();
+            let fish: HistoryFile<_> =
+                "- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n".into();
             let entries = parse_entries([zsh, fish]).unwrap().entries;
             assert_eq!(entries.len(), 1);
             let entry = &entries[0];
