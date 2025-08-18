@@ -194,7 +194,7 @@ where
 }
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
-    debug_assert!(
+    assert!(
         a.duration == b.duration || a.duration == 0 || b.duration == 0,
         "merging entries with conflicting durations",
     );
