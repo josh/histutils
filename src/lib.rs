@@ -967,8 +967,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     mod detect_format {
-        use crate::{ShellFormat, detect_format};
+        use super::{ShellFormat, detect_format};
         use std::io::Cursor;
 
         #[test]
@@ -1001,7 +1003,7 @@ mod tests {
     }
 
     mod parse_sh_entries {
-        use crate::{Context, parse_sh_entries};
+        use super::{Context, parse_sh_entries};
         use std::{io::Cursor, path::PathBuf};
 
         #[test]
@@ -1047,7 +1049,7 @@ mod tests {
     }
 
     mod parse_zsh_extended_entries {
-        use crate::{Context, parse_zsh_extended_entries};
+        use super::{Context, parse_zsh_extended_entries};
         use std::{io::Cursor, path::PathBuf};
 
         #[test]
@@ -1079,10 +1081,10 @@ mod tests {
     }
 
     mod parse_entries {
-        use crate::{HistoryFile, parse_entries};
+        use super::{HistoryFile, parse_entries};
 
         mod sh {
-            use crate::{HistoryFile, parse_entries};
+            use super::{HistoryFile, parse_entries};
 
             #[test]
             fn single() {
@@ -1155,7 +1157,7 @@ mod tests {
         }
 
         mod zsh {
-            use crate::{HistoryFile, parse_entries};
+            use super::{HistoryFile, parse_entries};
 
             #[test]
             fn multiline() {
@@ -1232,7 +1234,7 @@ mod tests {
         }
 
         mod fish {
-            use crate::{HistoryFile, parse_entries};
+            use super::{HistoryFile, parse_entries};
 
             #[test]
             fn single() {
@@ -1360,7 +1362,7 @@ mod tests {
     }
 
     mod merge_history_entries {
-        use crate::{HistoryEntry, merge_history_entries};
+        use super::{HistoryEntry, merge_history_entries};
 
         #[test]
         fn merge_duplicate_entries() {
@@ -1458,7 +1460,7 @@ mod tests {
 
     mod write_entries {
         mod sh {
-            use crate::{HistoryEntry, ShellFormat, write_entries};
+            use super::super::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
@@ -1526,7 +1528,7 @@ mod tests {
         }
 
         mod zsh {
-            use crate::{HistoryEntry, ShellFormat, write_entries};
+            use super::super::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
@@ -1610,7 +1612,7 @@ mod tests {
         }
 
         mod fish {
-            use crate::{HistoryEntry, ShellFormat, write_entries};
+            use super::super::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
@@ -1737,7 +1739,7 @@ mod tests {
 
     mod roundtrip {
         mod sh {
-            use crate::{ShellFormat, parse_entries, write_entries};
+            use super::super::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn backslash() {
@@ -1811,7 +1813,7 @@ mod tests {
         }
 
         mod zsh {
-            use crate::{ShellFormat, parse_entries, write_entries};
+            use super::super::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn backslash() {
@@ -1862,7 +1864,7 @@ mod tests {
         }
 
         mod fish {
-            use crate::{ShellFormat, parse_entries, write_entries};
+            use super::super::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn simple() {
