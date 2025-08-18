@@ -240,3 +240,25 @@ fn sh_to_zsh_missing_epoch() {
     assert!(stderr.contains("usage: --epoch="));
     assert!(stderr.contains("zsh"));
 }
+
+#[test]
+fn zsh_bad_history_count() {
+    let data_file = test_data_path("zsh_bad_history");
+
+    let output = histutils(&["--count", &data_file]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "1");
+}
+
+#[test]
+fn zsh_bad_history_to_zsh() {
+    let data_file = test_data_path("zsh_bad_history");
+
+    let output = histutils(&["--format", "zsh", &data_file]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout, ": 100:1;ok\n");
+}

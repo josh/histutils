@@ -491,22 +491,34 @@ fn parse_zsh_raw_entry(
     ctx: &Context,
     line_no: usize,
 ) -> Result<HistoryEntry, ParseError> {
-    if !line.starts_with(b":") {
+    // Require space after initial colon (": ") per zsh extended history format
+    if !line.starts_with(b": ") {
         return Err(ParseError::BadZshExtendedHeader);
     }
 
-    let Some(idx_colon) = line[1..].iter().position(|&b| b == b':') else {
+    // Parse timestamp until next ':'
+    let rest = &line[2..];
+    let Some(idx_colon) = rest.iter().position(|&b| b == b':') else {
         return Err(ParseError::BadZshExtendedHeader);
     };
+    let ts_bytes = &rest[..idx_colon];
+    if ts_bytes.is_empty() {
+        return Err(ParseError::BadZshExtendedHeader);
+    }
 
-    let ts_bytes = &line[2..=idx_colon];
-
-    let Some(idx_sc) = line[idx_colon + 2..].iter().position(|&b| b == b';') else {
+    // Parse duration until ';'
+    let rest2 = &rest[idx_colon + 1..];
+    let Some(idx_sc) = rest2.iter().position(|&b| b == b';') else {
         return Err(ParseError::BadZshExtendedHeader);
     };
-
-    let dur_bytes = &line[idx_colon + 2..idx_colon + 2 + idx_sc];
-    let cmd_bytes = &line[idx_colon + 3 + idx_sc..];
+    let dur_bytes = &rest2[..idx_sc];
+    if dur_bytes.is_empty() {
+        return Err(ParseError::BadZshExtendedHeader);
+    }
+    let cmd_bytes = &rest2[idx_sc + 1..];
+    if cmd_bytes.is_empty() {
+        return Err(ParseError::BadZshExtendedHeader);
+    }
 
     let ts_str = str::from_utf8(ts_bytes)?;
     let dur_str = str::from_utf8(dur_bytes)?;
@@ -526,8 +538,9 @@ fn parse_zsh_raw_entry(
         lossy.to_string()
     };
 
-    assert!(timestamp.is_some());
-    assert!(duration.is_some());
+    assert!(!command.is_empty(), "command is required");
+    assert!(timestamp.is_some(), "timestamp is required");
+    assert!(duration.is_some(), "duration is required");
 
     Ok(HistoryEntry {
         timestamp,
