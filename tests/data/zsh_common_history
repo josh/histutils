@@ -1,0 +1,12 @@
+: 1700000001:0;echo hello
+: 1700000002:0;echo hello world
+: 1700000003:0;cargo build
+: 1700000004:0;echo foo\\
+bar\\
+baz
+: 1700000005:0;echo foo\
+echo bar
+: 1700000006:0;echo foo\\bar
+: 1700000007:0;echo foo\\
+: 42:0;echo bar
+: 1700000008:0;echo foo\nbar

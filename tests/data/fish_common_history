@@ -1,0 +1,16 @@
+- cmd: echo hello
+  when: 1700000001
+- cmd: echo hello world
+  when: 1700000002
+- cmd: cargo build
+  when: 1700000003
+- cmd: echo foo\\\nbar\\\nbaz
+  when: 1700000004
+- cmd: echo foo\necho bar
+  when: 1700000005
+- cmd: echo foo\\\\bar
+  when: 1700000006
+- cmd: echo foo\\\n: 42:0;echo bar
+  when: 1700000007
+- cmd: echo foo\\nbar
+  when: 1700000008

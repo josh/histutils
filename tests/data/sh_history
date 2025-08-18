@@ -1,0 +1,12 @@
+echo hello
+echo hello world
+cargo build
+echo foo\\
+bar\\
+baz
+echo foo\
+echo bar
+echo foo\\bar
+echo foo\\
+: 42:0;echo bar
+echo foo\nbar
