@@ -17,7 +17,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             "--version" | "-V" => {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+                println!("histutils {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--count" | "-c" => {

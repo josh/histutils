@@ -15,6 +15,25 @@ fn prints_help() {
 }
 
 #[test]
+fn prints_version() {
+    let bin = env!("CARGO_BIN_EXE_histutils");
+    let output = Command::new(bin)
+        .arg("--version")
+        .output()
+        .expect("failed to run process");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("histutils"));
+
+    let expected_version = env!("CARGO_PKG_VERSION");
+    assert!(
+        stdout.contains(expected_version),
+        "Expected version {expected_version}, got: {stdout}"
+    );
+}
+
+#[test]
 fn counts_entries_from_stdin() {
     let bin = env!("CARGO_BIN_EXE_histutils");
     let mut child = Command::new(bin)
