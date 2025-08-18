@@ -378,7 +378,15 @@ where
     let path = path.to_owned();
     ShellHistLines::new(reader).filter_map(move |entry_res| match entry_res {
         Ok((line, line_no)) => match parse_zsh_raw_entry(&line, &path, line_no) {
-            Ok(entry) => Some(Ok(entry)),
+            Ok(entry) => {
+                // FIXME: remove this hack eventually
+                if entry.timestamp == 0 {
+                    eprintln!("{}:{line_no}: missing timestamp", path.display());
+                    None
+                } else {
+                    Some(Ok(entry))
+                }
+            }
             Err(err) => {
                 eprintln!("{}:{line_no}: {err}", path.display());
                 None
@@ -514,7 +522,15 @@ where
     let path = path.to_owned();
     FishHistEntries::new(reader).filter_map(move |entry_res| match entry_res {
         Ok((entry_data, line_no)) => match parse_fish_raw_entry(&entry_data, &path, line_no) {
-            Ok(entry) => Some(Ok(entry)),
+            Ok(entry) => {
+                // FIXME: remove this hack eventually
+                if entry.timestamp == 0 {
+                    eprintln!("{}:{line_no}: missing timestamp", path.display());
+                    None
+                } else {
+                    Some(Ok(entry))
+                }
+            }
             Err(err) => {
                 eprintln!("{}:{line_no}: {err}", path.display());
                 None
