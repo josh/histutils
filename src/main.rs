@@ -15,7 +15,7 @@ fn main() -> io::Result<()> {
 
     if config.print_help {
         println!(
-            "usage: histutils [--format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
+            "usage: histutils [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
         );
         return Ok(());
     }
@@ -54,9 +54,9 @@ fn main() -> io::Result<()> {
         println!("{}", history.entries.len());
     } else {
         let detected_format = history.primary_format();
-        let format = config.format.or(detected_format);
+        let format = config.output_format.or(detected_format);
         if format.is_none() {
-            eprintln!("usage: --format= required when multiple input formats are given");
+            eprintln!("usage: --output-format= required when multiple input formats are given");
             process::exit(1);
         }
         let fmt = format.unwrap();
@@ -87,7 +87,7 @@ struct ArgError(String);
 
 #[derive(Debug)]
 struct Config {
-    format: Option<ShellFormat>,
+    output_format: Option<ShellFormat>,
     paths: Vec<String>,
     count: bool,
     epoch: Option<u64>,
@@ -98,7 +98,7 @@ struct Config {
 fn parse_args(args: &[String]) -> Result<Config, ArgError> {
     let mut args = args.iter();
     let mut config = Config {
-        format: None,
+        output_format: None,
         paths: Vec::new(),
         count: false,
         epoch: None,
@@ -128,20 +128,20 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     return Err(ArgError("--epoch requires a value".to_string()));
                 }
             }
-            "--format" => {
+            "--output-format" => {
                 if let Some(fmt) = args.next() {
-                    config.format = if let Some(f) = parse_format_opt(fmt) {
+                    config.output_format = if let Some(f) = parse_format_opt(fmt) {
                         Some(f)
                     } else {
                         return Err(ArgError(format!("unknown format: {fmt}")));
                     };
                 } else {
-                    return Err(ArgError("--format requires a value".to_string()));
+                    return Err(ArgError("--output-format requires a value".to_string()));
                 }
             }
-            _ if arg.starts_with("--format=") => {
-                let fmt = &arg["--format=".len()..];
-                config.format = if let Some(f) = parse_format_opt(fmt) {
+            _ if arg.starts_with("--output-format=") => {
+                let fmt = &arg["--output-format=".len()..];
+                config.output_format = if let Some(f) = parse_format_opt(fmt) {
                     Some(f)
                 } else {
                     return Err(ArgError(format!("unknown format: {fmt}")));

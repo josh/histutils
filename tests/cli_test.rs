@@ -85,7 +85,7 @@ fn prints_version() {
 
 #[test]
 fn bad_format() {
-    let output = histutils(&["--format", "foo"]);
+    let output = histutils(&["--output-format", "foo"]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -153,7 +153,7 @@ fn roundtrip_sh_history() {
     let data_file = test_data_path("sh_history");
     let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-    let output = histutils(&["--format", "sh", &data_file]);
+    let output = histutils(&["--output-format", "sh", &data_file]);
     let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
     assert!(output.status.success());
@@ -165,7 +165,7 @@ fn roundtrip_zsh_common_history() {
     let data_file = test_data_path("zsh_common_history");
     let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-    let output = histutils(&["--format", "zsh", &data_file]);
+    let output = histutils(&["--output-format", "zsh", &data_file]);
     let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
     assert!(output.status.success());
@@ -177,7 +177,7 @@ fn roundtrip_zsh_duration_history() {
     let data_file = test_data_path("zsh_duration_history");
     let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-    let output = histutils(&["--format", "zsh", &data_file]);
+    let output = histutils(&["--output-format", "zsh", &data_file]);
     let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
     assert!(output.status.success());
@@ -189,7 +189,7 @@ fn roundtrip_fish_common_history() {
     let data_file = test_data_path("fish_common_history");
     let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-    let output = histutils(&["--format", "fish", &data_file]);
+    let output = histutils(&["--output-format", "fish", &data_file]);
     let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
     assert!(output.status.success());
@@ -201,7 +201,7 @@ fn roundtrip_fish_paths_history() {
     let data_file = test_data_path("fish_paths_history");
     let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-    let output = histutils(&["--format", "fish", &data_file]);
+    let output = histutils(&["--output-format", "fish", &data_file]);
     let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
     assert!(output.status.success());
@@ -213,7 +213,7 @@ fn lossless_zsh_to_fish() {
     let input_data_file = test_data_path("zsh_common_history");
     let output_data_file = test_data_path("fish_common_history");
 
-    let output = histutils(&["--format", "fish", &input_data_file]);
+    let output = histutils(&["--output-format", "fish", &input_data_file]);
     let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
     let expected_output_str =
         std::fs::read_to_string(&output_data_file).expect("failed to read file");
@@ -227,7 +227,7 @@ fn lossless_fish_to_zsh() {
     let input_data_file = test_data_path("fish_common_history");
     let output_data_file = test_data_path("zsh_common_history");
 
-    let output = histutils(&["--format", "zsh", &input_data_file]);
+    let output = histutils(&["--output-format", "zsh", &input_data_file]);
     let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
     let expected_output_str =
         std::fs::read_to_string(&output_data_file).expect("failed to read file");
@@ -241,7 +241,7 @@ fn lossy_zsh_to_sh() {
     let input_data_file = test_data_path("zsh_common_history");
     let output_data_file = test_data_path("sh_history");
 
-    let output = histutils(&["--format", "sh", &input_data_file]);
+    let output = histutils(&["--output-format", "sh", &input_data_file]);
     let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
     let expected_output_str =
         std::fs::read_to_string(&output_data_file).expect("failed to read file");
@@ -255,7 +255,7 @@ fn lossy_fish_to_sh() {
     let input_data_file = test_data_path("fish_common_history");
     let output_data_file = test_data_path("sh_history");
 
-    let output = histutils(&["--format", "sh", &input_data_file]);
+    let output = histutils(&["--output-format", "sh", &input_data_file]);
     let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
     let expected_output_str =
         std::fs::read_to_string(&output_data_file).expect("failed to read file");
@@ -268,7 +268,7 @@ fn lossy_fish_to_sh() {
 fn sh_to_zsh_missing_epoch() {
     let input_data_file = test_data_path("sh_history");
 
-    let output = histutils(&["--format", "zsh", &input_data_file]);
+    let output = histutils(&["--output-format", "zsh", &input_data_file]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -291,7 +291,7 @@ fn zsh_bad_history_count() {
 fn zsh_bad_history_to_zsh() {
     let data_file = test_data_path("zsh_bad_history");
 
-    let output = histutils(&["--format", "zsh", &data_file]);
+    let output = histutils(&["--output-format", "zsh", &data_file]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -307,7 +307,9 @@ fn output_format_mixed_error() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("usage: --format= required when multiple input formats are given"));
+    assert!(
+        stderr.contains("usage: --output-format= required when multiple input formats are given")
+    );
 }
 
 #[test]
