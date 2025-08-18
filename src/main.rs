@@ -59,7 +59,24 @@ fn main() -> io::Result<()> {
             eprintln!("could not detect history format; please specify --format");
             process::exit(1);
         }
-        write_entries(&mut io::stdout(), history.entries, format.unwrap())?;
+        let fmt = format.unwrap();
+        if let Err(err) = write_entries(&mut io::stdout(), history.entries, fmt) {
+            let msg = err.to_string();
+            if err.kind() == io::ErrorKind::InvalidData && msg == "entry missing required timestamp"
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                eprintln!(
+                    "usage: --epoch={now} required when exporting timestampless entries to {}",
+                    fmt.as_str()
+                );
+            } else {
+                eprintln!("{msg}");
+            }
+            process::exit(1);
+        }
     }
 
     Ok(())

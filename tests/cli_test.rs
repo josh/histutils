@@ -228,3 +228,15 @@ fn lossy_fish_to_sh() {
     assert!(output.status.success());
     assert_eq!(actual_output_str, expected_output_str);
 }
+
+#[test]
+fn sh_to_zsh_missing_epoch() {
+    let input_data_file = test_data_path("sh_history");
+
+    let output = histutils(&["--format", "zsh", &input_data_file]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("usage: --epoch="));
+    assert!(stderr.contains("zsh"));
+}
