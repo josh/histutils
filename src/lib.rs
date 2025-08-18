@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HistoryEntry {
     pub timestamp: Option<u64>,
     pub duration: Option<u64>,
@@ -217,8 +217,8 @@ where
     R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
 {
-    let mut map: BTreeMap<Option<u64>, Vec<HistoryEntry>> = BTreeMap::new();
     let mut original_formats = HashSet::new();
+    let mut entries_iterators = Vec::new();
 
     for history_file in files {
         let mut ctx = (*ctx).clone();
@@ -235,26 +235,16 @@ where
             ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, &ctx)),
         };
 
+        // Collect all entries from this file, handling errors
+        let mut file_entries = Vec::new();
         for entry_result in entries_iter {
-            let entry = entry_result?;
-            let entries = map.entry(entry.timestamp).or_default();
-
-            // Never merge entries with missing timestamps
-            if entry.timestamp.is_none() {
-                entries.push(entry);
-                continue;
-            }
-
-            if let Some(existing) = entries.iter_mut().find(|e| e.command == entry.command) {
-                let merged = merge_entries(existing.clone(), entry);
-                *existing = merged;
-            } else {
-                entries.push(entry);
-            }
+            file_entries.push(entry_result?);
         }
+
+        entries_iterators.push(file_entries.into_iter());
     }
 
-    let entries = map.into_iter().flat_map(|(_, v)| v).collect();
+    let entries: Vec<_> = merge_history_entries(entries_iterators).collect();
 
     Ok(HistoryEntries {
         entries,
@@ -912,6 +902,67 @@ where
     Ok(())
 }
 
+/// Merges multiple iterators of history entries into a single iterator.
+///
+/// This function takes iterators of `HistoryEntry` and merges them based on timestamp and command.
+/// Entries with the same timestamp and command are merged using the `merge_entries` function.
+/// Entries without timestamps are never merged and are kept as-is.
+///
+/// # Arguments
+///
+/// * `entries_iterators` - An iterator of iterators, where each inner iterator yields `HistoryEntry`
+///
+/// # Returns
+///
+/// An iterator over merged `HistoryEntry` items.
+///
+/// # Examples
+///
+/// ```
+/// use histutils::{HistoryEntry, merge_history_entries};
+///
+/// let entries1 = vec![
+///     HistoryEntry { timestamp: Some(1000), command: "echo hello".to_string(), ..Default::default() },
+///     HistoryEntry { timestamp: Some(2000), command: "ls".to_string(), ..Default::default() },
+/// ];
+///
+/// let entries2 = vec![
+///     HistoryEntry { timestamp: Some(1000), command: "echo hello".to_string(), ..Default::default() },
+///     HistoryEntry { timestamp: Some(3000), command: "pwd".to_string(), ..Default::default() },
+/// ];
+///
+/// let merged: Vec<_> = merge_history_entries(vec![entries1.into_iter(), entries2.into_iter()]).collect();
+/// assert_eq!(merged.len(), 3); // 1000:echo hello (merged), 2000:ls, 3000:pwd
+/// ```
+pub fn merge_history_entries<I>(entries_iterators: I) -> impl Iterator<Item = HistoryEntry>
+where
+    I: IntoIterator,
+    I::Item: IntoIterator<Item = HistoryEntry>,
+{
+    let mut map: BTreeMap<Option<u64>, Vec<HistoryEntry>> = BTreeMap::new();
+
+    for entries_iter in entries_iterators {
+        for entry in entries_iter {
+            let entries = map.entry(entry.timestamp).or_default();
+
+            // Never merge entries with missing timestamps
+            if entry.timestamp.is_none() {
+                entries.push(entry);
+                continue;
+            }
+
+            if let Some(existing) = entries.iter_mut().find(|e| e.command == entry.command) {
+                let merged = merge_entries(existing.clone(), entry);
+                *existing = merged;
+            } else {
+                entries.push(entry);
+            }
+        }
+    }
+
+    map.into_iter().flat_map(|(_, v)| v)
+}
+
 #[cfg(test)]
 mod tests {
     mod detect_format {
@@ -1371,6 +1422,103 @@ mod tests {
             assert_eq!(entries[0].timestamp, None);
             assert_eq!(entries[1].timestamp, Some(1));
             assert_eq!(entries[2].timestamp, Some(2));
+        }
+    }
+
+    mod merge_history_entries {
+        use crate::{HistoryEntry, merge_history_entries};
+
+        #[test]
+        fn merge_duplicate_entries() {
+            let entries1 = vec![
+                HistoryEntry {
+                    timestamp: Some(1000),
+                    duration: Some(5),
+                    command: "echo hello".to_string(),
+                    paths: Some(vec!["/tmp".to_string()]),
+                },
+                HistoryEntry {
+                    timestamp: Some(2000),
+                    duration: Some(10),
+                    command: "ls".to_string(),
+                    paths: None,
+                },
+            ];
+
+            let entries2 = vec![
+                HistoryEntry {
+                    timestamp: Some(1000),
+                    duration: Some(0),
+                    command: "echo hello".to_string(),
+                    paths: Some(vec!["/home".to_string()]),
+                },
+                HistoryEntry {
+                    timestamp: Some(3000),
+                    duration: Some(15),
+                    command: "pwd".to_string(),
+                    paths: None,
+                },
+            ];
+
+            let merged: Vec<_> =
+                merge_history_entries(vec![entries1.into_iter(), entries2.into_iter()]).collect();
+
+            assert_eq!(merged.len(), 3);
+
+            // Check that the duplicate entry was merged correctly
+            let echo_entry = merged.iter().find(|e| e.command == "echo hello").unwrap();
+            assert_eq!(echo_entry.timestamp, Some(1000));
+            assert_eq!(echo_entry.duration, Some(5)); // Prefer non-zero duration
+            assert_eq!(
+                echo_entry.paths,
+                Some(vec!["/tmp".to_string(), "/home".to_string()])
+            );
+
+            // Check other entries are preserved
+            assert!(
+                merged
+                    .iter()
+                    .any(|e| e.command == "ls" && e.timestamp == Some(2000))
+            );
+            assert!(
+                merged
+                    .iter()
+                    .any(|e| e.command == "pwd" && e.timestamp == Some(3000))
+            );
+        }
+
+        #[test]
+        fn preserve_entries_without_timestamps() {
+            let entries1 = vec![HistoryEntry {
+                timestamp: None,
+                duration: None,
+                command: "echo hello".to_string(),
+                paths: None,
+            }];
+
+            let entries2 = vec![HistoryEntry {
+                timestamp: None,
+                duration: None,
+                command: "echo hello".to_string(),
+                paths: None,
+            }];
+
+            let merged: Vec<_> =
+                merge_history_entries(vec![entries1.into_iter(), entries2.into_iter()]).collect();
+
+            // Entries without timestamps should never be merged
+            assert_eq!(merged.len(), 2);
+            assert_eq!(
+                merged.iter().filter(|e| e.command == "echo hello").count(),
+                2
+            );
+        }
+
+        #[test]
+        fn empty_iterators() {
+            let merged: Vec<_> =
+                merge_history_entries::<Vec<std::iter::Empty<HistoryEntry>>>(vec![]).collect();
+            assert_eq!(merged.len(), 0);
         }
     }
 
