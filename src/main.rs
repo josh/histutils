@@ -1,61 +1,32 @@
-use histutils::{HistoryFile, ShellFormat, parse_entries, write_entries};
+use histutils::{Context, HistoryFile, ShellFormat, parse_entries_with_ctx, write_entries};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::process;
 
 fn main() -> io::Result<()> {
-    let mut args = env::args().skip(1);
-    let mut format: Option<ShellFormat> = None;
-    let mut paths: Vec<String> = Vec::new();
-    let mut count = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                println!("usage: histutils [--format FORMAT] [--count] [--version] [FILE...]");
-                return Ok(());
-            }
-            "--version" | "-V" => {
-                println!("histutils {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--count" | "-c" => {
-                count = true;
-            }
-            "--format" => {
-                if let Some(fmt) = args.next() {
-                    format = if let Some(f) = parse_format_opt(&fmt) {
-                        Some(f)
-                    } else {
-                        eprintln!("unknown format: {fmt}");
-                        process::exit(1);
-                    };
-                } else {
-                    eprintln!("--format requires a value");
-                    process::exit(1);
-                }
-            }
-            _ if arg.starts_with("--format=") => {
-                let fmt = &arg["--format=".len()..];
-                format = if let Some(f) = parse_format_opt(fmt) {
-                    Some(f)
-                } else {
-                    eprintln!("unknown format: {fmt}");
-                    process::exit(1);
-                };
-            }
-            _ => {
-                paths.push(arg);
-            }
+    let args: Vec<String> = env::args().collect();
+    let config = match parse_args(&args[1..]) {
+        Ok(config) => config,
+        Err(ArgError(msg)) => {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
         }
+    };
+
+    if config.print_help {
+        println!(
+            "usage: histutils [--format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
+        );
+        return Ok(());
     }
 
-    if paths.is_empty() {
-        paths.push("-".to_string());
+    if config.print_version {
+        println!("histutils {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
     }
 
-    let history_files: Vec<HistoryFile<Box<dyn BufRead>>> = paths
+    let history_files: Vec<HistoryFile<Box<dyn BufRead>>> = config
+        .paths
         .into_iter()
         .map(|p| -> io::Result<HistoryFile<Box<dyn BufRead>>> {
             if p == "-" {
@@ -73,29 +44,117 @@ fn main() -> io::Result<()> {
         })
         .collect::<io::Result<Vec<_>>>()?;
 
-    let history = parse_entries(history_files)?;
+    let ctx = Context {
+        epoch: config.epoch,
+        ..Default::default()
+    };
+    let history = parse_entries_with_ctx(history_files, &ctx)?;
 
-    if count {
+    if config.count {
         println!("{}", history.entries.len());
     } else {
         let detected_format = history.primary_format();
-        format = format.or(detected_format);
+        let format = config.format.or(detected_format);
         if format.is_none() {
             eprintln!("could not detect history format; please specify --format");
             process::exit(1);
         }
-
-        let mut stdout = io::stdout();
-        write_entries(&mut stdout, history.entries, format.unwrap())?;
+        write_entries(&mut io::stdout(), history.entries, format.unwrap())?;
     }
 
     Ok(())
 }
 
+#[derive(Debug)]
+struct ArgError(String);
+
+#[derive(Debug)]
+struct Config {
+    format: Option<ShellFormat>,
+    paths: Vec<String>,
+    count: bool,
+    epoch: Option<u64>,
+    print_help: bool,
+    print_version: bool,
+}
+
+fn parse_args(args: &[String]) -> Result<Config, ArgError> {
+    let mut args = args.iter();
+    let mut config = Config {
+        format: None,
+        paths: Vec::new(),
+        count: false,
+        epoch: None,
+        print_help: false,
+        print_version: false,
+    };
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                config.print_help = true;
+            }
+            "--version" | "-V" => {
+                config.print_version = true;
+            }
+            "--count" | "-c" => {
+                config.count = true;
+            }
+            "--epoch" => {
+                if let Some(epoch_str) = args.next() {
+                    if let Ok(e) = epoch_str.parse::<u64>() {
+                        config.epoch = Some(e);
+                    } else {
+                        return Err(ArgError(format!("invalid epoch value: {epoch_str}")));
+                    }
+                } else {
+                    return Err(ArgError("--epoch requires a value".to_string()));
+                }
+            }
+            "--format" => {
+                if let Some(fmt) = args.next() {
+                    config.format = if let Some(f) = parse_format_opt(fmt) {
+                        Some(f)
+                    } else {
+                        return Err(ArgError(format!("unknown format: {fmt}")));
+                    };
+                } else {
+                    return Err(ArgError("--format requires a value".to_string()));
+                }
+            }
+            _ if arg.starts_with("--format=") => {
+                let fmt = &arg["--format=".len()..];
+                config.format = if let Some(f) = parse_format_opt(fmt) {
+                    Some(f)
+                } else {
+                    return Err(ArgError(format!("unknown format: {fmt}")));
+                };
+            }
+            _ if arg.starts_with("--epoch=") => {
+                let epoch_str = &arg["--epoch=".len()..];
+                if let Ok(e) = epoch_str.parse::<u64>() {
+                    config.epoch = Some(e);
+                } else {
+                    return Err(ArgError(format!("invalid epoch value: {epoch_str}")));
+                }
+            }
+            _ => {
+                config.paths.push(arg.clone());
+            }
+        }
+    }
+
+    if config.paths.is_empty() {
+        config.paths.push("-".to_string());
+    }
+
+    Ok(config)
+}
+
 fn parse_format_opt(s: &str) -> Option<ShellFormat> {
     match s {
         "sh" | "bash" => Some(ShellFormat::Sh),
-        "zsh" | "zsh-extended" | "zsh_extended" => Some(ShellFormat::ZshExtended),
+        "zsh" => Some(ShellFormat::ZshExtended),
         "fish" => Some(ShellFormat::Fish),
         _ => None,
     }

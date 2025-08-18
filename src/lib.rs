@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, Cursor, Result as IoResult, Write};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryEntry {
-    pub timestamp: u64,
-    pub duration: u64,
+    pub timestamp: Option<u64>,
+    pub duration: Option<u64>,
     pub command: String,
-    pub paths: Vec<String>,
+    pub paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,6 +17,12 @@ pub enum ShellFormat {
     Sh,
     ZshExtended,
     Fish,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Context {
+    pub epoch: Option<u64>,
+    pub filename: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -153,29 +159,69 @@ where
     R: BufRead,
     I: IntoIterator<Item = HistoryFile<R>>,
 {
-    let mut map: BTreeMap<u64, Vec<HistoryEntry>> = BTreeMap::new();
+    parse_entries_with_ctx(files, &Context::default())
+}
+
+/// Parses history entries from multiple files and fallback timestamp epoch.
+///
+/// # Arguments
+///
+/// * `files` - An iterator of `HistoryFile` instances to parse and analyze.
+/// * `epoch` - Fallback timestamp epoch to use if no timestamp is found.
+///
+/// # Examples
+///
+/// ```
+/// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
+/// let bash_history: histutils::HistoryFile<_> = "echo world\nls\n".into();
+///
+/// let ctx = histutils::Context::default();
+/// let history = histutils::parse_entries_with_ctx([zsh_history, bash_history], &ctx).unwrap();
+/// assert!(history.entries.len() >= 2);
+/// assert!(history.original_formats.len() == 2); // Mixed formats
+/// ```
+///
+/// # Returns
+///
+/// Returns parsed `HistoryEntries` struct.
+///
+/// # Errors
+///
+/// Returns an error if reading from any file fails or if invalid metadata
+/// is encountered in extended shell formats.
+pub fn parse_entries_with_ctx<R, I>(files: I, ctx: &Context) -> IoResult<HistoryEntries>
+where
+    R: BufRead,
+    I: IntoIterator<Item = HistoryFile<R>>,
+{
+    let mut map: BTreeMap<Option<u64>, Vec<HistoryEntry>> = BTreeMap::new();
     let mut original_formats = HashSet::new();
 
     for history_file in files {
-        let path = history_file.path.as_deref().unwrap_or(Path::new("-"));
+        let mut ctx = (*ctx).clone();
+        ctx.filename = history_file.path.clone();
+
         let mut reader = history_file.reader;
 
         let file_format = detect_format(&mut reader);
         original_formats.insert(file_format);
 
         let entries_iter: Box<dyn Iterator<Item = IoResult<HistoryEntry>>> = match file_format {
-            ShellFormat::Fish => Box::new(parse_fish_entries(&mut reader, path)),
-            ShellFormat::ZshExtended => Box::new(parse_zsh_extended_entries(&mut reader, path)),
-            ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, path)),
+            ShellFormat::Fish => Box::new(parse_fish_entries(&mut reader, &ctx)),
+            ShellFormat::ZshExtended => Box::new(parse_zsh_extended_entries(&mut reader, &ctx)),
+            ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, &ctx)),
         };
 
         for entry_result in entries_iter {
             let entry = entry_result?;
             let entries = map.entry(entry.timestamp).or_default();
-            if entry.timestamp == 0 {
+
+            // Never merge entries with missing timestamps
+            if entry.timestamp.is_none() {
                 entries.push(entry);
                 continue;
             }
+
             if let Some(existing) = entries.iter_mut().find(|e| e.command == entry.command) {
                 let merged = merge_entries(existing.clone(), entry);
                 *existing = merged;
@@ -195,29 +241,44 @@ where
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
     assert!(
-        a.timestamp != 0 && b.timestamp != 0,
-        "both entries must have non-zero timestamps"
+        a.timestamp.is_some() && b.timestamp.is_some(),
+        "both entries must have timestamps"
     );
     assert!(
         a.timestamp == b.timestamp,
         "both entries must have the same timestamp"
     );
     assert!(
-        a.duration == b.duration || a.duration == 0 || b.duration == 0,
-        "merging entries with conflicting durations",
+        a.command == b.command,
+        "both entries must have the same command"
     );
-    if a.duration == 0 {
-        a.duration = b.duration;
+
+    // Prefer non-zero durations, or fall back to any Some duration
+    match (a.duration, b.duration) {
+        (Some(a_dur), Some(b_dur)) => {
+            if a_dur == 0 && b_dur > 0 {
+                a.duration = Some(b_dur);
+            }
+            // Keep a.duration if both are non-zero or if b is zero
+        }
+        (None, Some(_)) => a.duration = b.duration,
+        // Keep a.duration if b is None
+        _ => {}
     }
-    if a.paths.is_empty() {
-        a.paths = b.paths;
-    } else if !b.paths.is_empty() {
-        for p in b.paths {
-            if !a.paths.contains(&p) {
-                a.paths.push(p);
+
+    // Merge paths uniquely
+    match (&mut a.paths, b.paths) {
+        (None, Some(b_paths)) => a.paths = Some(b_paths),
+        (Some(a_paths), Some(b_paths)) => {
+            for p in b_paths {
+                if !a_paths.contains(&p) {
+                    a_paths.push(p);
+                }
             }
         }
+        _ => {}
     }
+
     a
 }
 
@@ -351,52 +412,50 @@ where
 
 fn parse_sh_entries<'a, R>(
     reader: &'a mut R,
-    path: &Path,
+    ctx: &'a Context,
 ) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
 where
     R: BufRead,
 {
-    let path = path.to_owned();
     ShellHistLines::new(reader).map(move |entry_res| {
         let (line, line_no) = entry_res?;
         let command = if let Ok(s) = str::from_utf8(&line) {
             s.to_string()
         } else {
-            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+            if let Some(path) = &ctx.filename {
+                eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+            } else {
+                eprintln!(":{line_no}: invalid UTF-8");
+            }
             let lossy = String::from_utf8_lossy(&line);
             eprintln!("{lossy}");
             lossy.to_string()
         };
         Ok(HistoryEntry {
-            timestamp: 0,
-            duration: 0,
+            timestamp: ctx.epoch,
+            duration: None,
             command,
-            paths: vec![],
+            paths: None,
         })
     })
 }
 
 fn parse_zsh_extended_entries<'a, R>(
     reader: &'a mut R,
-    path: &Path,
+    ctx: &'a Context,
 ) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
 where
     R: BufRead,
 {
-    let path = path.to_owned();
     ShellHistLines::new(reader).filter_map(move |entry_res| match entry_res {
-        Ok((line, line_no)) => match parse_zsh_raw_entry(&line, &path, line_no) {
-            Ok(entry) => {
-                // FIXME: remove this hack eventually
-                if entry.timestamp == 0 {
-                    eprintln!("{}:{line_no}: missing timestamp", path.display());
-                    None
-                } else {
-                    Some(Ok(entry))
-                }
-            }
+        Ok((line, line_no)) => match parse_zsh_raw_entry(&line, ctx, line_no) {
+            Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                eprintln!("{}:{line_no}: {err}", path.display());
+                if let Some(path) = &ctx.filename {
+                    eprintln!("{}:{line_no}: {err}", path.display());
+                } else {
+                    eprintln!(":{line_no}: {err}");
+                }
                 None
             }
         },
@@ -406,7 +465,7 @@ where
 
 fn parse_zsh_raw_entry(
     line: &[u8],
-    path: &Path,
+    ctx: &Context,
     line_no: usize,
 ) -> Result<HistoryEntry, ParseError> {
     if !line.starts_with(b":") {
@@ -428,23 +487,30 @@ fn parse_zsh_raw_entry(
 
     let ts_str = str::from_utf8(ts_bytes)?;
     let dur_str = str::from_utf8(dur_bytes)?;
-    let timestamp = ts_str.parse()?;
-    let duration = dur_str.parse()?;
+    let timestamp = Some(ts_str.parse()?);
+    let duration = Some(dur_str.parse()?);
 
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         s.to_string()
     } else {
-        eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        if let Some(path) = &ctx.filename {
+            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        } else {
+            eprintln!(":{line_no}: invalid UTF-8");
+        }
         let lossy = String::from_utf8_lossy(cmd_bytes);
         eprintln!("{lossy}");
         lossy.to_string()
     };
 
+    assert!(timestamp.is_some());
+    assert!(duration.is_some());
+
     Ok(HistoryEntry {
         timestamp,
         duration,
         command,
-        paths: Vec::new(),
+        paths: None,
     })
 }
 
@@ -522,25 +588,20 @@ where
 
 fn parse_fish_entries<'a, R>(
     reader: &'a mut R,
-    path: &Path,
+    ctx: &'a Context,
 ) -> impl Iterator<Item = IoResult<HistoryEntry>> + 'a
 where
     R: BufRead,
 {
-    let path = path.to_owned();
     FishHistEntries::new(reader).filter_map(move |entry_res| match entry_res {
-        Ok((entry_data, line_no)) => match parse_fish_raw_entry(&entry_data, &path, line_no) {
-            Ok(entry) => {
-                // FIXME: remove this hack eventually
-                if entry.timestamp == 0 {
-                    eprintln!("{}:{line_no}: missing timestamp", path.display());
-                    None
-                } else {
-                    Some(Ok(entry))
-                }
-            }
+        Ok((entry_data, line_no)) => match parse_fish_raw_entry(&entry_data, ctx, line_no) {
+            Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                eprintln!("{}:{line_no}: {err}", path.display());
+                if let Some(path) = &ctx.filename {
+                    eprintln!("{}:{line_no}: {err}", path.display());
+                } else {
+                    eprintln!(":{line_no}: {err}");
+                }
                 None
             }
         },
@@ -550,7 +611,7 @@ where
 
 fn parse_fish_raw_entry(
     data: &[u8],
-    path: &Path,
+    ctx: &Context,
     line_no: usize,
 ) -> Result<HistoryEntry, ParseError> {
     let lines: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
@@ -566,7 +627,11 @@ fn parse_fish_raw_entry(
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         unescape_fish(s)
     } else {
-        eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        if let Some(path) = &ctx.filename {
+            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
+        } else {
+            eprintln!(":{line_no}: invalid UTF-8");
+        }
         let lossy = String::from_utf8_lossy(cmd_bytes);
         eprintln!("{lossy}");
         unescape_fish(&lossy)
@@ -610,10 +675,10 @@ fn parse_fish_raw_entry(
     }
 
     Ok(HistoryEntry {
-        timestamp,
-        duration: 0,
+        timestamp: Some(timestamp),
+        duration: None,
         command,
-        paths,
+        paths: if paths.is_empty() { None } else { Some(paths) },
     })
 }
 
@@ -662,16 +727,16 @@ fn unescape_fish(s: &str) -> String {
 /// ```
 /// let entries = vec![
 ///     histutils::HistoryEntry {
-///         timestamp: 1640995200,
-///         duration: 1000,
+///         timestamp: Some(1640995200),
+///         duration: Some(1000),
 ///         command: "ls -la".to_string(),
-///         paths: vec!["/home/user".to_string()],
+///         paths: Some(vec!["/home/user".to_string()]),
 ///     },
 ///     histutils::HistoryEntry {
-///         timestamp: 1640995260,
-///         duration: 500,
+///         timestamp: Some(1640995260),
+///         duration: Some(500),
 ///         command: "git status".to_string(),
-///         paths: vec!["/home/user/project".to_string()],
+///         paths: Some(vec!["/home/user/project".to_string()]),
 ///     },
 /// ];
 ///
@@ -735,18 +800,25 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if writing to the output fails.
+/// Returns an error if writing to the output fails or if any entry has a `None` timestamp,
+/// as zsh format requires timestamps.
 pub fn write_zsh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
 where
     W: Write,
     I: IntoIterator<Item = HistoryEntry>,
 {
     for entry in entries {
+        let timestamp = entry.timestamp.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "entry missing required timestamp",
+            )
+        })?;
         writeln!(
             writer,
             ": {}:{};{}",
-            entry.timestamp,
-            entry.duration,
+            timestamp,
+            entry.duration.unwrap_or(0),
             entry.command.replace('\n', "\\\n")
         )?;
     }
@@ -769,7 +841,12 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if writing to the output fails.
+/// Returns an error if writing to the output fails or if any entry has a `None` timestamp,
+/// as fish format requires timestamps.
+///
+/// # Panics
+///
+/// Panics if paths is `Some` but empty, which should not happen in normal usage.
 pub fn write_fish_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
 where
     W: Write,
@@ -781,10 +858,17 @@ where
             "- cmd: {}",
             entry.command.replace('\\', "\\\\").replace('\n', "\\n")
         )?;
-        writeln!(writer, "  when: {}", entry.timestamp)?;
-        if !entry.paths.is_empty() {
+        let timestamp = entry.timestamp.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "entry missing required timestamp",
+            )
+        })?;
+        writeln!(writer, "  when: {timestamp}")?;
+        if let Some(paths) = &entry.paths {
+            assert!(!paths.is_empty(), "paths was some but empty");
             writeln!(writer, "  paths:")?;
-            for p in entry.paths {
+            for p in paths {
                 writeln!(writer, "    - {}", &p)?;
             }
         }
@@ -794,10 +878,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     mod detect_format {
-        use super::{ShellFormat, detect_format};
+        use crate::{ShellFormat, detect_format};
         use std::io::Cursor;
 
         #[test]
@@ -830,7 +912,7 @@ mod tests {
     }
 
     mod parse_entries_primary_format {
-        use super::{HistoryFile, ShellFormat, parse_entries};
+        use crate::{HistoryFile, ShellFormat, parse_entries};
         use std::io::Cursor;
 
         #[test]
@@ -898,14 +980,18 @@ mod tests {
     }
 
     mod parse_sh_entries {
-        use super::parse_sh_entries;
+        use crate::{Context, parse_sh_entries};
         use std::{io::Cursor, path::PathBuf};
 
         #[test]
         fn empty() {
             let mut input = Cursor::new("");
             let path = PathBuf::from(".history");
-            let mut entries = parse_sh_entries(&mut input, &path);
+            let ctx = Context {
+                epoch: None,
+                filename: Some(path.clone()),
+            };
+            let mut entries = parse_sh_entries(&mut input, &ctx);
             assert!(entries.next().is_none());
         }
 
@@ -913,23 +999,45 @@ mod tests {
         fn multiple() {
             let mut input = Cursor::new("foo\nbar\nbaz\n");
             let path = PathBuf::from(".history");
-            let mut entries = parse_sh_entries(&mut input, &path);
+            let ctx = Context {
+                epoch: None,
+                filename: Some(path.clone()),
+            };
+            let mut entries = parse_sh_entries(&mut input, &ctx);
             assert_eq!("foo", entries.next().unwrap().unwrap().command);
             assert_eq!("bar", entries.next().unwrap().unwrap().command);
             assert_eq!("baz", entries.next().unwrap().unwrap().command);
             assert!(entries.next().is_none());
         }
+
+        #[test]
+        fn epoch() {
+            let mut input = Cursor::new("foo\nbar\nbaz\n");
+            let path = PathBuf::from(".history");
+            let ctx = Context {
+                epoch: Some(1_234_567_890),
+                filename: Some(path.clone()),
+            };
+            let mut entries = parse_sh_entries(&mut input, &ctx);
+            let entry = entries.next().unwrap().unwrap();
+            assert_eq!("foo", entry.command);
+            assert_eq!(Some(1_234_567_890), entry.timestamp);
+        }
     }
 
     mod parse_zsh_extended_entries {
-        use super::parse_zsh_extended_entries;
+        use crate::{Context, parse_zsh_extended_entries};
         use std::{io::Cursor, path::PathBuf};
 
         #[test]
         fn empty() {
             let mut input = Cursor::new("");
             let path = PathBuf::from(".zsh_history");
-            let mut entries = parse_zsh_extended_entries(&mut input, &path);
+            let ctx = Context {
+                epoch: None,
+                filename: Some(path.clone()),
+            };
+            let mut entries = parse_zsh_extended_entries(&mut input, &ctx);
             assert!(entries.next().is_none());
         }
 
@@ -937,7 +1045,11 @@ mod tests {
         fn multiple() {
             let mut input = Cursor::new(": 1:0;foo\n: 2:0;bar\n: 3:0;baz\n");
             let path = PathBuf::from(".zsh_history");
-            let mut entries = parse_zsh_extended_entries(&mut input, &path);
+            let ctx = Context {
+                epoch: None,
+                filename: Some(path.clone()),
+            };
+            let mut entries = parse_zsh_extended_entries(&mut input, &ctx);
             assert_eq!("foo", entries.next().unwrap().unwrap().command);
             assert_eq!("bar", entries.next().unwrap().unwrap().command);
             assert_eq!("baz", entries.next().unwrap().unwrap().command);
@@ -946,10 +1058,10 @@ mod tests {
     }
 
     mod parse_entries {
-        use super::{HistoryFile, parse_entries};
+        use crate::{HistoryFile, parse_entries};
 
         mod sh {
-            use super::{HistoryFile, parse_entries};
+            use crate::{HistoryFile, parse_entries};
 
             #[test]
             fn single() {
@@ -1014,15 +1126,15 @@ mod tests {
                 let h2: HistoryFile<_> = "echo hi\n".into();
                 let entries = parse_entries([h1, h2]).expect("should parse").entries;
                 assert_eq!(entries.len(), 2);
-                assert_eq!(entries[0].timestamp, 0);
-                assert_eq!(entries[1].timestamp, 0);
+                assert_eq!(entries[0].timestamp, None);
+                assert_eq!(entries[1].timestamp, None);
                 assert_eq!(entries[0].command, "echo hi");
                 assert_eq!(entries[1].command, "echo hi");
             }
         }
 
         mod zsh {
-            use super::{HistoryFile, parse_entries};
+            use crate::{HistoryFile, parse_entries};
 
             #[test]
             fn multiline() {
@@ -1032,12 +1144,12 @@ mod tests {
 
                 assert_eq!(entries.len(), 2);
 
-                assert_eq!(entries[0].timestamp, 1_700_000_001);
-                assert_eq!(entries[0].duration, 0);
+                assert_eq!(entries[0].timestamp, Some(1_700_000_001));
+                assert_eq!(entries[0].duration, Some(0));
                 assert_eq!(entries[0].command, "echo hello");
 
-                assert_eq!(entries[1].timestamp, 1_700_000_002);
-                assert_eq!(entries[1].duration, 5);
+                assert_eq!(entries[1].timestamp, Some(1_700_000_002));
+                assert_eq!(entries[1].duration, Some(5));
                 assert_eq!(entries[1].command, "ls -la");
             }
 
@@ -1073,8 +1185,8 @@ mod tests {
                 let h2: HistoryFile<_> = ": 1:0;one\n".into();
                 let entries = parse_entries([h1, h2]).unwrap().entries;
                 assert_eq!(entries.len(), 2);
-                assert_eq!(entries[0].timestamp, 1);
-                assert_eq!(entries[1].timestamp, 2);
+                assert_eq!(entries[0].timestamp, Some(1));
+                assert_eq!(entries[1].timestamp, Some(2));
             }
 
             #[test]
@@ -1093,13 +1205,13 @@ mod tests {
                 let h2: HistoryFile<_> = ": 1:0;one\n".into();
                 let entries = parse_entries([h1, h2]).unwrap().entries;
                 assert_eq!(entries.len(), 1);
-                assert_eq!(entries[0].timestamp, 1);
+                assert_eq!(entries[0].timestamp, Some(1));
                 assert_eq!(entries[0].command, "one");
             }
         }
 
         mod fish {
-            use super::{HistoryFile, parse_entries};
+            use crate::{HistoryFile, parse_entries};
 
             #[test]
             fn single() {
@@ -1107,7 +1219,7 @@ mod tests {
                 let entries = parse_entries([input]).unwrap().entries;
 
                 assert_eq!(entries.len(), 1);
-                assert_eq!(entries[0].timestamp, 1_700_000_000);
+                assert_eq!(entries[0].timestamp, Some(1_700_000_000));
                 assert_eq!(entries[0].command, "cargo build");
             }
 
@@ -1119,7 +1231,10 @@ mod tests {
                 let entries = parse_entries([input]).unwrap().entries;
 
                 assert_eq!(entries.len(), 1);
-                assert_eq!(entries[0].paths, vec!["~/Developer/histutils".to_string()]);
+                assert_eq!(
+                    entries[0].paths,
+                    Some(vec!["~/Developer/histutils".to_string()])
+                );
             }
 
             #[test]
@@ -1130,7 +1245,7 @@ mod tests {
                 assert_eq!(entries.len(), 1);
                 assert_eq!(
                     entries[0].paths,
-                    vec!["~/project1".to_string(), "~/project2".to_string()]
+                    Some(vec!["~/project1".to_string(), "~/project2".to_string()])
                 );
             }
 
@@ -1140,7 +1255,7 @@ mod tests {
                 let entries = parse_entries([input]).unwrap().entries;
 
                 assert_eq!(entries.len(), 2);
-                assert_eq!(entries[0].paths, vec!["~/project1".to_string()]);
+                assert_eq!(entries[0].paths, Some(vec!["~/project1".to_string()]));
                 assert_eq!(entries[1].command, "echo hi");
             }
 
@@ -1161,7 +1276,7 @@ mod tests {
                 let entries = parse_entries([input]).unwrap().entries;
 
                 assert_eq!(entries.len(), 1);
-                assert_eq!(entries[0].timestamp, 1_516_464_765);
+                assert_eq!(entries[0].timestamp, Some(1_516_464_765));
                 assert_eq!(entries[0].command, "git commit -m \"Test: something\"");
             }
 
@@ -1199,10 +1314,10 @@ mod tests {
                 let entries = parse_entries([zsh, fish]).unwrap().entries;
                 assert_eq!(entries.len(), 1);
                 let entry = &entries[0];
-                assert_eq!(entry.timestamp, 1000);
+                assert_eq!(entry.timestamp, Some(1000));
                 assert_eq!(entry.command, "echo hello");
-                assert_eq!(entry.duration, 5);
-                assert_eq!(entry.paths, vec!["/tmp".to_string()]);
+                assert_eq!(entry.duration, Some(5));
+                assert_eq!(entry.paths, Some(vec!["/tmp".to_string()]));
             }
         }
 
@@ -1217,25 +1332,23 @@ mod tests {
             assert_eq!(entries[0].command, "echo sh");
             assert_eq!(entries[1].command, "echo zsh");
             assert_eq!(entries[2].command, "echo fish");
-            assert_eq!(entries[0].timestamp, 0);
-            assert_eq!(entries[1].timestamp, 1);
-            assert_eq!(entries[2].timestamp, 2);
+            assert_eq!(entries[0].timestamp, None);
+            assert_eq!(entries[1].timestamp, Some(1));
+            assert_eq!(entries[2].timestamp, Some(2));
         }
     }
 
     mod write_entries {
-        use super::{HistoryEntry, ShellFormat, write_entries};
-
         mod sh {
-            use super::{HistoryEntry, ShellFormat, write_entries};
+            use crate::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 0,
-                    duration: 0,
+                    timestamp: None,
+                    duration: None,
                     command: "echo hello".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1247,16 +1360,16 @@ mod tests {
             fn multiple() {
                 let entries = vec![
                     HistoryEntry {
-                        timestamp: 0,
-                        duration: 0,
+                        timestamp: None,
+                        duration: None,
                         command: "echo foo".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                     HistoryEntry {
-                        timestamp: 0,
-                        duration: 0,
+                        timestamp: None,
+                        duration: None,
                         command: "echo bar".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                 ];
 
@@ -1268,10 +1381,10 @@ mod tests {
             #[test]
             fn no_escape_backslash() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 0,
-                    duration: 0,
+                    timestamp: None,
+                    duration: None,
                     command: "echo hello \\ world".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1282,10 +1395,10 @@ mod tests {
             #[test]
             fn escape_newline() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 0,
-                    duration: 0,
+                    timestamp: None,
+                    duration: None,
                     command: "echo hello\nworld".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1295,15 +1408,15 @@ mod tests {
         }
 
         mod zsh {
-            use super::{HistoryEntry, ShellFormat, write_entries};
+            use crate::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1315,16 +1428,16 @@ mod tests {
             fn multiple() {
                 let entries = vec![
                     HistoryEntry {
-                        timestamp: 1,
-                        duration: 0,
+                        timestamp: Some(1),
+                        duration: Some(0),
                         command: "echo foo".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                     HistoryEntry {
-                        timestamp: 2,
-                        duration: 0,
+                        timestamp: Some(2),
+                        duration: Some(0),
                         command: "echo bar".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                 ];
 
@@ -1336,10 +1449,10 @@ mod tests {
             #[test]
             fn no_escape_backslash() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello \\ world".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1350,28 +1463,44 @@ mod tests {
             #[test]
             fn escape_newline() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello\nworld".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
                 write_entries(&mut output, entries, ShellFormat::ZshExtended).unwrap();
                 assert_eq!(output, b": 1:0;echo hello\\\nworld\n");
             }
+            #[test]
+            fn missing_timestamp_error() {
+                let entries = vec![HistoryEntry {
+                    timestamp: None,
+                    duration: Some(0),
+                    command: "echo hello".to_string(),
+                    paths: None,
+                }];
+
+                let mut output = Vec::new();
+                let result = write_entries(&mut output, entries, ShellFormat::ZshExtended);
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+                assert_eq!(err.to_string(), "entry missing required timestamp");
+            }
         }
 
         mod fish {
-            use super::{HistoryEntry, ShellFormat, write_entries};
+            use crate::{HistoryEntry, ShellFormat, write_entries};
 
             #[test]
             fn single() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1383,16 +1512,16 @@ mod tests {
             fn multiple() {
                 let entries = vec![
                     HistoryEntry {
-                        timestamp: 1,
-                        duration: 0,
+                        timestamp: Some(1),
+                        duration: Some(0),
                         command: "echo foo".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                     HistoryEntry {
-                        timestamp: 2,
-                        duration: 0,
+                        timestamp: Some(2),
+                        duration: Some(0),
                         command: "echo bar".to_string(),
-                        paths: Vec::new(),
+                        paths: None,
                     },
                 ];
 
@@ -1407,10 +1536,10 @@ mod tests {
             #[test]
             fn single_path() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1_700_000_000,
-                    duration: 100,
+                    timestamp: Some(1_700_000_000),
+                    duration: Some(100),
                     command: "cargo build".to_string(),
-                    paths: vec!["~/Developer/histutils".to_string()],
+                    paths: Some(vec!["~/Developer/histutils".to_string()]),
                 }];
 
                 let mut output = Vec::new();
@@ -1424,10 +1553,13 @@ mod tests {
             #[test]
             fn multiple_paths() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1_700_000_000,
-                    duration: 100,
+                    timestamp: Some(1_700_000_000),
+                    duration: Some(100),
                     command: "cargo build".to_string(),
-                    paths: vec!["~/Developer/histutils".to_string(), "/tmp".to_string()],
+                    paths: Some(vec![
+                        "~/Developer/histutils".to_string(),
+                        "/tmp".to_string(),
+                    ]),
                 }];
 
                 let mut output = Vec::new();
@@ -1441,10 +1573,10 @@ mod tests {
             #[test]
             fn escape_backslash() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello \\ world".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
@@ -1455,24 +1587,39 @@ mod tests {
             #[test]
             fn escape_newline() {
                 let entries = vec![HistoryEntry {
-                    timestamp: 1,
-                    duration: 0,
+                    timestamp: Some(1),
+                    duration: Some(0),
                     command: "echo hello\nworld".to_string(),
-                    paths: Vec::new(),
+                    paths: None,
                 }];
 
                 let mut output = Vec::new();
                 write_entries(&mut output, entries, ShellFormat::Fish).unwrap();
                 assert_eq!(output, b"- cmd: echo hello\\nworld\n  when: 1\n");
             }
+
+            #[test]
+            fn missing_timestamp_error() {
+                let entries = vec![HistoryEntry {
+                    timestamp: None,
+                    duration: Some(0),
+                    command: "echo hello".to_string(),
+                    paths: None,
+                }];
+
+                let mut output = Vec::new();
+                let result = write_entries(&mut output, entries, ShellFormat::Fish);
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+                assert_eq!(err.to_string(), "entry missing required timestamp");
+            }
         }
     }
 
     mod roundtrip {
-        use super::{ShellFormat, parse_entries, write_entries};
-
         mod sh {
-            use super::{ShellFormat, parse_entries, write_entries};
+            use crate::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn backslash() {
@@ -1546,7 +1693,7 @@ mod tests {
         }
 
         mod zsh {
-            use super::{ShellFormat, parse_entries, write_entries};
+            use crate::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn backslash() {
@@ -1597,7 +1744,7 @@ mod tests {
         }
 
         mod fish {
-            use super::{ShellFormat, parse_entries, write_entries};
+            use crate::{ShellFormat, parse_entries, write_entries};
 
             #[test]
             fn simple() {
