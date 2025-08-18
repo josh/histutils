@@ -195,6 +195,14 @@ where
 
 fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
     assert!(
+        a.timestamp != 0 && b.timestamp != 0,
+        "both entries must have non-zero timestamps"
+    );
+    assert!(
+        a.timestamp == b.timestamp,
+        "both entries must have the same timestamp"
+    );
+    assert!(
         a.duration == b.duration || a.duration == 0 || b.duration == 0,
         "merging entries with conflicting durations",
     );
