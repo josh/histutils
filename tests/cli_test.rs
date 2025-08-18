@@ -116,6 +116,38 @@ fn count_stdin() {
 }
 
 #[test]
+fn writes_to_output_file() {
+    let input_str = ": 123:0;echo hello\n";
+    let input_file = TempFile::with_content(input_str);
+    let output_file = TempFile::with_content("");
+
+    let output = histutils(&["--output", output_file.path_str(), input_file.path_str()]);
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let output_str =
+        std::fs::read_to_string(&output_file.path).expect("failed to read output file");
+    assert_eq!(output_str, input_str);
+}
+
+#[test]
+fn overwrites_existing_output_file() {
+    let input_str = ": 123:0;echo hello\n";
+    let input_file = TempFile::with_content(input_str);
+    let output_file = TempFile::with_content("initial contents\n");
+
+    let output = histutils(&["--output", output_file.path_str(), input_file.path_str()]);
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let output_str =
+        std::fs::read_to_string(&output_file.path).expect("failed to read output file");
+    assert_eq!(output_str, input_str);
+}
+
+#[test]
 fn count_zsh_history() {
     let data_file = test_data_path("zsh_common_history");
 
@@ -266,9 +298,9 @@ fn lossy_fish_to_sh() {
 
 #[test]
 fn sh_to_zsh_missing_epoch() {
-    let input_data_file = test_data_path("sh_history");
+    let data_file = test_data_path("sh_history");
 
-    let output = histutils(&["--output-format", "zsh", &input_data_file]);
+    let output = histutils(&["--output-format", "zsh", &data_file]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);

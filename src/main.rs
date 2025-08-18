@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::process;
 
+use std::io::Write;
+
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     let config = match parse_args(&args[1..]) {
@@ -15,7 +17,7 @@ fn main() -> io::Result<()> {
 
     if config.print_help {
         println!(
-            "usage: histutils [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
+            "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
         );
         return Ok(());
     }
@@ -60,7 +62,14 @@ fn main() -> io::Result<()> {
             process::exit(1);
         }
         let fmt = format.unwrap();
-        if let Err(err) = write_entries(&mut io::stdout(), history.entries, fmt) {
+
+        let mut writer: Box<dyn Write> = if let Some(path) = config.output {
+            Box::new(File::create(path)?)
+        } else {
+            Box::new(io::stdout())
+        };
+
+        if let Err(err) = write_entries(&mut writer, history.entries, fmt) {
             let msg = err.to_string();
             if err.kind() == io::ErrorKind::InvalidData && msg == "entry missing required timestamp"
             {
@@ -85,9 +94,10 @@ fn main() -> io::Result<()> {
 #[derive(Debug)]
 struct ArgError(String);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Config {
     output_format: Option<ShellFormat>,
+    output: Option<String>,
     paths: Vec<String>,
     count: bool,
     epoch: Option<u64>,
@@ -97,14 +107,7 @@ struct Config {
 
 fn parse_args(args: &[String]) -> Result<Config, ArgError> {
     let mut args = args.iter();
-    let mut config = Config {
-        output_format: None,
-        paths: Vec::new(),
-        count: false,
-        epoch: None,
-        print_help: false,
-        print_version: false,
-    };
+    let mut config = Config::default();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -116,6 +119,13 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
             }
             "--count" | "-c" => {
                 config.count = true;
+            }
+            "--output" | "-o" => {
+                if let Some(path) = args.next() {
+                    config.output = Some(path.clone());
+                } else {
+                    return Err(ArgError(format!("{arg} requires a value")));
+                }
             }
             "--epoch" => {
                 if let Some(epoch_str) = args.next() {
