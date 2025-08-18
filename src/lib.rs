@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, Cursor, Result as IoResult, Write};
 
+use std::fmt;
 use std::path::PathBuf;
 use std::str;
 
@@ -17,6 +18,28 @@ pub enum ShellFormat {
     Sh,
     ZshExtended,
     Fish,
+}
+
+impl fmt::Display for ShellFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ShellFormat::Sh => "sh",
+            ShellFormat::ZshExtended => "zsh",
+            ShellFormat::Fish => "fish",
+        };
+        f.write_str(s)
+    }
+}
+
+impl ShellFormat {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sh => "sh",
+            Self::ZshExtended => "zsh",
+            Self::Fish => "fish",
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
