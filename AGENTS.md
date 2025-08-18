@@ -6,6 +6,13 @@ This project is written in Rust and assumes Rust 1.89 or newer.
 
 1. Install Rust 1.89 or later via rustup
 
+## Dependencies
+
+This project uses only the Rust standard library.
+
+- No external crates: do not add new dependencies to `Cargo.toml`.
+- Write all code using `std` only (including tests and examples).
+
 ## Testing
 
 Run tests with:
