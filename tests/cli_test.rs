@@ -1,13 +1,20 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+fn get_bin() -> &'static str {
+    env!("CARGO_BIN_EXE_histutils")
+}
+
+fn histutils(args: &[&str]) -> std::process::Output {
+    Command::new(get_bin())
+        .args(args)
+        .output()
+        .expect("failed to run process")
+}
+
 #[test]
 fn prints_help() {
-    let bin = env!("CARGO_BIN_EXE_histutils");
-    let output = Command::new(bin)
-        .arg("--help")
-        .output()
-        .expect("failed to run process");
+    let output = histutils(&["--help"]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -16,11 +23,7 @@ fn prints_help() {
 
 #[test]
 fn prints_version() {
-    let bin = env!("CARGO_BIN_EXE_histutils");
-    let output = Command::new(bin)
-        .arg("--version")
-        .output()
-        .expect("failed to run process");
+    let output = histutils(&["--version"]);
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -35,8 +38,7 @@ fn prints_version() {
 
 #[test]
 fn counts_entries_from_stdin() {
-    let bin = env!("CARGO_BIN_EXE_histutils");
-    let mut child = Command::new(bin)
+    let mut child = Command::new(get_bin())
         .arg("--count")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -59,12 +61,7 @@ fn counts_entries_from_stdin() {
 
 #[test]
 fn invalid_format_fails() {
-    let bin = env!("CARGO_BIN_EXE_histutils");
-    let output = Command::new(bin)
-        .arg("--format")
-        .arg("wat")
-        .output()
-        .expect("failed to run process");
+    let output = histutils(&["--format", "wat"]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
