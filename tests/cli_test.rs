@@ -48,6 +48,25 @@ fn histutils(args: &[&str]) -> std::process::Output {
         .expect("failed to run process")
 }
 
+fn histutils_with_stdin(args: &[&str], stdin_content: &[u8]) -> std::process::Output {
+    let mut child = Command::new(get_bin())
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn process");
+
+    {
+        let stdin = child.stdin.as_mut().expect("failed to open stdin");
+        stdin
+            .write_all(stdin_content)
+            .expect("failed to write to stdin");
+    }
+
+    child.wait_with_output().expect("failed to wait on child")
+}
+
 // Helper function to get the full path to a test data file
 fn test_data_path(name: &str) -> String {
     let project_root = env!("CARGO_MANIFEST_DIR");
@@ -102,21 +121,7 @@ fn missing_epoch_value() {
 
 #[test]
 fn count_stdin() {
-    let mut child = Command::new(get_bin())
-        .arg("--count")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn process");
-
-    {
-        let stdin = child.stdin.as_mut().expect("failed to open stdin");
-        stdin
-            .write_all(b"foo\nbar\nbaz\n")
-            .expect("failed to write to stdin");
-    }
-
-    let output = child.wait_with_output().expect("failed to wait on child");
+    let output = histutils_with_stdin(&["--count"], b"foo\nbar\nbaz\n");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -186,6 +191,45 @@ fn reads_sh_history() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "10");
+}
+
+#[test]
+fn sh_invalid_utf8_handling() {
+    let output = histutils_with_stdin(&["--count"], b"echo hello\xFF\nok\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+}
+
+#[test]
+fn zsh_invalid_utf8_handling() {
+    let output = histutils_with_stdin(&["--count"], b": 123:0;echo hello\xFF\n: 124:0;ok\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+}
+
+#[test]
+fn fish_invalid_utf8_handling() {
+    let output = histutils_with_stdin(
+        &["--count"],
+        b"- cmd: echo hello\xFF\n  when: 123\n- cmd: ok\n  when: 124\n",
+    );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
 }
 
 #[test]
