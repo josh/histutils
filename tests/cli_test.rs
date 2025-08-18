@@ -1,6 +1,41 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{self, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Helper struct for creating temporary test files that are automatically cleaned up
+struct TempFile {
+    path: PathBuf,
+}
+
+impl TempFile {
+    /// Creates a new temporary file with the given content
+    fn with_content(content: &str) -> Self {
+        let temp_dir = std::env::temp_dir();
+        let pid = u128::from(process::id()); // 32 bits on all tier-1 platforms
+        let n = u128::from(COUNTER.fetch_add(1, Ordering::Relaxed));
+        let unique_id = (pid << 96) | n;
+        let temp_file = temp_dir.join(format!("histutils_test_{unique_id}"));
+        std::fs::write(&temp_file, content).expect("failed to write temp file");
+
+        Self { path: temp_file }
+    }
+
+    /// Gets the path as a string slice
+    fn path_str(&self) -> &str {
+        self.path
+            .to_str()
+            .expect("temp file path is not valid UTF-8")
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 fn get_bin() -> &'static str {
     env!("CARGO_BIN_EXE_histutils")
@@ -261,4 +296,103 @@ fn zsh_bad_history_to_zsh() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout, ": 100:1;ok\n");
+}
+
+#[test]
+fn output_format_mixed_error() {
+    let temp_file1 = TempFile::with_content(": 1234567891:0;echo foo\n");
+    let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 1234567892\n");
+
+    let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("usage: --format= required when multiple input formats are given"));
+}
+
+#[test]
+fn detect_output_format_sh() {
+    let temp_file = TempFile::with_content("echo hello\n");
+
+    let output = histutils(&[temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo hello\n");
+}
+
+#[test]
+fn detect_output_format_zsh() {
+    let temp_file = TempFile::with_content(": 123:0;echo hello\n");
+
+    let output = histutils(&[temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, ": 123:0;echo hello\n");
+}
+
+#[test]
+fn detect_output_format_fish() {
+    let temp_file = TempFile::with_content("- cmd: echo hello\n  when: 123\n");
+
+    let output = histutils(&[temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "- cmd: echo hello\n  when: 123\n");
+}
+
+#[test]
+fn detect_output_format_sh_multiple() {
+    let temp_file1 = TempFile::with_content("echo foo\n");
+    let temp_file2 = TempFile::with_content("echo bar\n");
+    let temp_file3 = TempFile::with_content("echo baz\n");
+
+    let output = histutils(&[
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+        temp_file3.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo foo\necho bar\necho baz\n");
+}
+
+#[test]
+fn detect_output_format_zsh_multiple() {
+    let temp_file1 = TempFile::with_content(": 1:0;echo foo\n");
+    let temp_file2 = TempFile::with_content(": 2:0;echo bar\n");
+    let temp_file3 = TempFile::with_content(": 3:0;echo baz\n");
+
+    let output = histutils(&[
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+        temp_file3.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, ": 1:0;echo foo\n: 2:0;echo bar\n: 3:0;echo baz\n");
+}
+
+#[test]
+fn detect_output_format_fish_multiple() {
+    let temp_file1 = TempFile::with_content("- cmd: echo foo\n  when: 1\n");
+    let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 2\n");
+    let temp_file3 = TempFile::with_content("- cmd: echo baz\n  when: 3\n");
+
+    let output = histutils(&[
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+        temp_file3.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(
+        stdout,
+        "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n"
+    );
 }

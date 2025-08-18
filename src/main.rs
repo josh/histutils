@@ -56,7 +56,7 @@ fn main() -> io::Result<()> {
         let detected_format = history.primary_format();
         let format = config.format.or(detected_format);
         if format.is_none() {
-            eprintln!("could not detect history format; please specify --format");
+            eprintln!("usage: --format= required when multiple input formats are given");
             process::exit(1);
         }
         let fmt = format.unwrap();
