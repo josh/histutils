@@ -1,0 +1,5 @@
+echo hello world
+ls -la
+cd ~/Developer
+git status
+cargo build

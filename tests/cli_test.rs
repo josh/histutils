@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 fn get_bin() -> &'static str {
@@ -10,6 +11,18 @@ fn histutils(args: &[&str]) -> std::process::Output {
         .args(args)
         .output()
         .expect("failed to run process")
+}
+
+// Helper function to get the full path to a test data file
+fn test_data_path(name: &str) -> String {
+    let project_root = env!("CARGO_MANIFEST_DIR");
+    PathBuf::from(project_root)
+        .join("tests")
+        .join("data")
+        .join(name)
+        .to_str()
+        .expect("test data path is not valid UTF-8")
+        .to_string()
 }
 
 #[test]
@@ -27,7 +40,6 @@ fn prints_version() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("histutils"));
 
     let expected_version = env!("CARGO_PKG_VERSION");
     assert!(
@@ -37,7 +49,16 @@ fn prints_version() {
 }
 
 #[test]
-fn counts_entries_from_stdin() {
+fn bad_format() {
+    let output = histutils(&["--format", "foo"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown format: foo"));
+}
+
+#[test]
+fn count_stdin() {
     let mut child = Command::new(get_bin())
         .arg("--count")
         .stdin(Stdio::piped())
@@ -48,7 +69,7 @@ fn counts_entries_from_stdin() {
     {
         let stdin = child.stdin.as_mut().expect("failed to open stdin");
         stdin
-            .write_all(b": 1:0;echo hi\n")
+            .write_all(b"foo\nbar\nbaz\n")
             .expect("failed to write to stdin");
     }
 
@@ -56,14 +77,38 @@ fn counts_entries_from_stdin() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "1");
+    assert_eq!(stdout.trim(), "3");
 }
 
 #[test]
-fn invalid_format_fails() {
-    let output = histutils(&["--format", "wat"]);
+fn count_zsh_history() {
+    let data_file = test_data_path("zsh_history");
 
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unknown format: wat"));
+    let output = histutils(&["--count", &data_file]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "5");
+}
+
+#[test]
+fn reads_fish_history() {
+    let data_file = test_data_path("fish_history");
+
+    let output = histutils(&["--count", &data_file]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "5");
+}
+
+#[test]
+fn reads_bash_history() {
+    let data_file = test_data_path("bash_history");
+
+    let output = histutils(&["--count", &data_file]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "5");
 }

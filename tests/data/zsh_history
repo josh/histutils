@@ -1,0 +1,5 @@
+: 1700000001:0;echo hello world
+: 1700000002:5;ls -la
+: 1700000003:10;cd ~/Developer
+: 1700000004:2;git status
+: 1700000005:15;cargo build
