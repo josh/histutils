@@ -10,3 +10,5 @@ echo foo\\bar
 echo foo\\
 : 42:0;echo bar
 echo foo\nbar
+echo foo \ bar
+echo foo \\ bar

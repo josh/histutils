@@ -14,6 +14,10 @@
   when: 1700000007
 - cmd: echo foo\\nbar
   when: 1700000008
+- cmd: echo foo \\ bar
+  when: 1700000009
+- cmd: echo foo \\\\ bar
+  when: 1700000010
 - cmd: ls ~
   when: 1800000001
   paths:
