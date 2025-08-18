@@ -66,7 +66,8 @@ fn prints_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("usage: histutils"));
+    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]\n";
+    assert_eq!(stdout, expected_output);
 }
 
 #[test]
@@ -77,10 +78,8 @@ fn prints_version() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let expected_version = env!("CARGO_PKG_VERSION");
-    assert!(
-        stdout.contains(expected_version),
-        "Expected version {expected_version}, got: {stdout}"
-    );
+    let expected_output = format!("histutils {expected_version}\n");
+    assert_eq!(stdout, expected_output);
 }
 
 #[test]
@@ -89,7 +88,16 @@ fn bad_format() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unknown format: foo"));
+    assert_eq!(stderr, "usage: unknown --output-format=foo\n");
+}
+
+#[test]
+fn missing_epoch_value() {
+    let output = histutils(&["--epoch"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: --epoch requires a value\n");
 }
 
 #[test]
@@ -305,7 +313,7 @@ fn sh_to_zsh_missing_epoch() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("usage: --epoch="));
-    assert!(stderr.contains("zsh"));
+    assert!(stderr.contains("required when exporting timestampless entries to zsh"));
 }
 
 #[test]
@@ -339,8 +347,9 @@ fn output_format_mixed_error() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("usage: --output-format= required when multiple input formats are given")
+    assert_eq!(
+        stderr,
+        "usage: --output-format= required when multiple input formats are given\n"
     );
 }
 
@@ -429,4 +438,36 @@ fn detect_output_format_fish_multiple() {
         stdout,
         "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n"
     );
+}
+
+mod fish {
+    use super::*;
+
+    #[test]
+    fn bad_when() {
+        let temp_file = TempFile::with_content("- cmd: echo\n  when: abc\n- cmd: ok\n  when: 1\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "1");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(format!("{temp_path}:1: parse int error").as_str()));
+        assert!(stderr.contains("when: abc"));
+    }
+
+    #[test]
+    fn bad_property() {
+        let temp_file = TempFile::with_content("- cmd: echo\n  who: 1\n- cmd: ok\n  when: 1\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "1");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(format!("{temp_path}:1: bad fish header").as_str()));
+        assert!(stderr.contains("who: 1"));
+    }
 }

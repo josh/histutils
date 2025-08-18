@@ -11,7 +11,8 @@ fn main() -> io::Result<()> {
     let config = match parse_args(&args[1..]) {
         Ok(config) => config,
         Err(ArgError(msg)) => {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
+            eprintln!("{msg}");
+            std::process::exit(1);
         }
     };
 
@@ -135,7 +136,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                         return Err(ArgError(format!("invalid epoch value: {epoch_str}")));
                     }
                 } else {
-                    return Err(ArgError("--epoch requires a value".to_string()));
+                    return Err(ArgError("usage: --epoch requires a value".to_string()));
                 }
             }
             "--output-format" => {
@@ -143,7 +144,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     config.output_format = if let Some(f) = parse_format_opt(fmt) {
                         Some(f)
                     } else {
-                        return Err(ArgError(format!("unknown format: {fmt}")));
+                        return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
                     };
                 } else {
                     return Err(ArgError("--output-format requires a value".to_string()));
@@ -154,7 +155,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 config.output_format = if let Some(f) = parse_format_opt(fmt) {
                     Some(f)
                 } else {
-                    return Err(ArgError(format!("unknown format: {fmt}")));
+                    return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
                 };
             }
             _ if arg.starts_with("--epoch=") => {

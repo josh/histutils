@@ -629,6 +629,7 @@ where
                 } else {
                     eprintln!(":{line_no}: {err}");
                 }
+                eprintln!("{}", String::from_utf8_lossy(&entry_data));
                 None
             }
         },
