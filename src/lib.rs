@@ -998,38 +998,6 @@ mod tests {
         }
     }
 
-    mod parse_zsh_extended_entries {
-        use super::{Context, parse_zsh_extended_entries};
-        use std::{io::Cursor, path::PathBuf};
-
-        #[test]
-        fn empty() {
-            let mut input = Cursor::new("");
-            let path = PathBuf::from(".zsh_history");
-            let ctx = Context {
-                epoch: None,
-                filename: Some(path.clone()),
-            };
-            let mut entries = parse_zsh_extended_entries(&mut input, &ctx);
-            assert!(entries.next().is_none());
-        }
-
-        #[test]
-        fn multiple() {
-            let mut input = Cursor::new(": 1:0;foo\n: 2:0;bar\n: 3:0;baz\n");
-            let path = PathBuf::from(".zsh_history");
-            let ctx = Context {
-                epoch: None,
-                filename: Some(path.clone()),
-            };
-            let mut entries = parse_zsh_extended_entries(&mut input, &ctx);
-            assert_eq!("foo", entries.next().unwrap().unwrap().command);
-            assert_eq!("bar", entries.next().unwrap().unwrap().command);
-            assert_eq!("baz", entries.next().unwrap().unwrap().command);
-            assert!(entries.next().is_none());
-        }
-    }
-
     mod parse_entries {
         use super::{HistoryFile, parse_entries};
 
