@@ -1,3 +1,4 @@
+use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{self, Command, Stdio};
@@ -851,5 +852,26 @@ mod mixed {
             stderr,
             "usage: --output-format= required when multiple input formats are given\n",
         );
+    }
+
+    #[test]
+    fn same_file_input_output_safe() {
+        let mut input_str = String::new();
+        for i in 1..=10_000 {
+            writeln!(input_str, ": {}:0;echo command_{}", 1_000_000_000 + i, i).unwrap();
+        }
+        let temp_file = TempFile::with_content(&input_str);
+
+        let output = histutils(&[
+            "--output",
+            temp_file.path_str(),
+            "--output-format",
+            "fish",
+            temp_file.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let output_str = std::fs::read_to_string(&temp_file.path).expect("failed to read file");
+        assert!(output_str.starts_with("- cmd:"));
     }
 }
