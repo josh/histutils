@@ -123,6 +123,11 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 config.print_version = true;
             }
             "--count" | "-c" => {
+                if config.count {
+                    return Err(ArgError(
+                        "usage: --count specified multiple times".to_string(),
+                    ));
+                }
                 config.count = true;
             }
             "--output" | "-o" => {
@@ -133,6 +138,11 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 }
             }
             "--epoch" => {
+                if config.epoch.is_some() {
+                    return Err(ArgError(
+                        "usage: --epoch specified multiple times".to_string(),
+                    ));
+                }
                 if let Some(epoch_str) = args.next() {
                     if let Ok(e) = epoch_str.parse::<u64>() {
                         config.epoch = Some(e);
@@ -144,6 +154,11 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 }
             }
             "--output-format" => {
+                if config.output_format.is_some() {
+                    return Err(ArgError(
+                        "usage: --output-format specified multiple times".to_string(),
+                    ));
+                }
                 if let Some(fmt) = args.next() {
                     config.output_format = if let Some(f) = parse_format_opt(fmt) {
                         Some(f)
@@ -155,6 +170,11 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 }
             }
             _ if arg.starts_with("--output-format=") => {
+                if config.output_format.is_some() {
+                    return Err(ArgError(
+                        "usage: --output-format specified multiple times".to_string(),
+                    ));
+                }
                 let fmt = &arg["--output-format=".len()..];
                 config.output_format = if let Some(f) = parse_format_opt(fmt) {
                     Some(f)
@@ -163,6 +183,11 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 };
             }
             _ if arg.starts_with("--epoch=") => {
+                if config.epoch.is_some() {
+                    return Err(ArgError(
+                        "usage: --epoch specified multiple times".to_string(),
+                    ));
+                }
                 let epoch_str = &arg["--epoch=".len()..];
                 if let Ok(e) = epoch_str.parse::<u64>() {
                     config.epoch = Some(e);
