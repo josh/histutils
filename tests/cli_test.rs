@@ -241,7 +241,7 @@ mod sh {
         assert_eq!(stdout.trim(), "2");
         // Tabs-only line should be skipped as blank
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(":2: skipping blank command"));
+        assert_eq!(stderr, ":2: skipping blank command\n");
     }
 
     #[test]
@@ -315,7 +315,7 @@ mod sh {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(":2: skipping blank command"));
+        assert_eq!(stderr, ":2: skipping blank command\n");
     }
 }
 
@@ -530,7 +530,7 @@ mod zsh {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(":2: skipping blank command"));
+        assert_eq!(stderr, ":2: skipping blank command\n:2: blank command\n: 2:0;\t\t\n");
     }
 }
 
@@ -658,8 +658,7 @@ mod fish {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "1");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(format!("{temp_path}:1: parse int error").as_str()));
-        assert!(stderr.contains("when: abc"));
+        assert_eq!(stderr, format!("{temp_path}:1: parse int error\n- cmd: echo\n  when: abc\n\n"));
     }
 
     #[test]
@@ -672,8 +671,7 @@ mod fish {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "1");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(format!("{temp_path}:1: bad fish header").as_str()));
-        assert!(stderr.contains("who: 1"));
+        assert_eq!(stderr, format!("{temp_path}:1: bad fish header\n- cmd: echo\n  who: 1\n\n"));
     }
 
     #[test]
@@ -688,7 +686,7 @@ mod fish {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(format!("{temp_path}:3: skipping blank command").as_str()));
+        assert_eq!(stderr, format!("{temp_path}:3: skipping blank command\n{temp_path}:3: blank command\n- cmd: \t\t\n  when: 2\n\n"));
     }
 
     #[test]
