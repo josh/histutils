@@ -745,7 +745,7 @@ fn parse_fish_raw_entry(
 /// Checks if a command is blank (empty or contains only spaces).
 ///
 /// This function is used to validate that commands are not blank before
-/// creating HistoryEntry instances, as shells don't allow blank commands.
+/// creating `HistoryEntry` instances, as shells don't allow blank commands.
 /// Commands with newlines, tabs, or other characters are not considered blank.
 #[must_use]
 fn is_blank_command(command: &str) -> bool {
