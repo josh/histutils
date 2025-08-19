@@ -24,7 +24,7 @@ impl ShellFormat {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Sh => "sh",
-            Self::ZshExtended => "zsh",
+            Self::ZshExtended => "zsh-extended",
             Self::Fish => "fish",
         }
     }
