@@ -299,7 +299,7 @@ mod sh {
         assert_eq!(stdout.trim(), "2");
         // Tabs-only line should be skipped as blank
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, ":2: skipping blank command\n");
+        assert_eq!(stderr, ":2: skipping blank command\n\t\t\n");
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod sh {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, ":2: skipping blank command\n");
+        assert_eq!(stderr, ":2: skipping blank command\n   \n");
     }
 }
 
@@ -400,7 +400,7 @@ mod zsh {
         assert_eq!(stdout.trim(), "2");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+        assert_eq!(stderr, ":1: invalid UTF-8\n: 123:0;echo hello\u{FFFD}\n");
     }
 
     #[test]
@@ -415,7 +415,7 @@ mod zsh {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            format!("{temp_path}:1: invalid UTF-8\necho \u{FFFD}\n")
+            format!("{temp_path}:1: invalid UTF-8\n: 123:0;echo \u{FFFD}\n")
         );
     }
 
@@ -556,9 +556,7 @@ mod zsh {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            format!(
-                "{temp_path}:2: skipping blank command\n{temp_path}:2: blank command\n: 2:0;\t\t\n"
-            )
+            format!("{temp_path}:2: skipping blank command\n: 2:0;\t\t\n")
         );
     }
 
@@ -641,10 +639,7 @@ mod zsh {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(
-            stderr,
-            ":2: skipping blank command\n:2: blank command\n: 2:0;\t\t\n"
-        );
+        assert_eq!(stderr, ":2: skipping blank command\n: 2:0;\t\t\n");
     }
 }
 
@@ -689,7 +684,10 @@ mod fish {
         assert_eq!(stdout.trim(), "2");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+        assert_eq!(
+            stderr,
+            ":1: invalid UTF-8\n- cmd: echo hello\u{FFFD}\n  when: 123\n"
+        );
     }
 
     #[test]
@@ -774,7 +772,7 @@ mod fish {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            format!("{temp_path}:1: parse int error\n- cmd: echo\n  when: abc\n\n")
+            format!("{temp_path}:1: parse int error\n- cmd: echo\n  when: abc\n")
         );
     }
 
@@ -790,7 +788,7 @@ mod fish {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            format!("{temp_path}:1: bad fish header\n- cmd: echo\n  who: 1\n\n")
+            format!("{temp_path}:1: bad fish header\n- cmd: echo\n  who: 1\n")
         );
     }
 
@@ -808,9 +806,7 @@ mod fish {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            format!(
-                "{temp_path}:3: skipping blank command\n{temp_path}:3: blank command\n- cmd: \t\t\n  when: 2\n\n"
-            )
+            format!("{temp_path}:3: skipping blank command\n- cmd: \t\t\n  when: 2\n")
         );
     }
 
