@@ -393,7 +393,7 @@ fn output_format_mixed_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr,
-        "usage: --output-format= required when multiple input formats are given\n"
+        "usage: --output-format= required when multiple input formats are given\n",
     );
 }
 
@@ -480,7 +480,7 @@ fn detect_output_format_fish_multiple() {
     let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
     assert_eq!(
         stdout,
-        "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n"
+        "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n",
     );
 }
 
@@ -535,7 +535,7 @@ mod zsh {
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(
             stdout,
-            ": 0:0;zero\n: 1:0;one\n: 2:0;two\n: 3:0;three\n: 4:0;four\n"
+            ": 0:0;zero\n: 1:0;one\n: 2:0;two\n: 3:0;three\n: 4:0;four\n",
         );
     }
 
@@ -550,7 +550,7 @@ mod zsh {
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(
             stdout,
-            ": 100:0;first\n: 100:0;second\n: 100:0;third\n: 100:0;fourth\n: 100:0;fifth\n"
+            ": 100:0;first\n: 100:0;second\n: 100:0;third\n: 100:0;fourth\n: 100:0;fifth\n",
         );
     }
 
@@ -597,4 +597,53 @@ mod fish {
         assert!(stderr.contains(format!("{temp_path}:1: bad fish header").as_str()));
         assert!(stderr.contains("who: 1"));
     }
+
+    #[test]
+    fn skips_blank_commands() {
+        let temp_file = TempFile::with_content(
+            "- cmd: echo hello\n  when: 1\n- cmd: \t\t\n  when: 2\n- cmd: world\n  when: 3\n",
+        );
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(format!("{temp_path}:3: skipping blank command").as_str()));
+    }
+}
+
+#[test]
+fn skips_blank_commands_sh() {
+    let output = histutils_with_stdin(&["--count"], b"echo hello\n   \nworld\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(":2: skipping blank command"));
+}
+
+#[test]
+fn skips_blank_commands_zsh() {
+    let output = histutils_with_stdin(&["--count"], b": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(":2: skipping blank command"));
+}
+
+#[test]
+fn preserves_commands_with_tabs() {
+    let output = histutils_with_stdin(&["--count"], b"echo hello\n\t\t\nworld\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+    // Tabs-only line should be skipped as blank
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(":2: skipping blank command"));
 }

@@ -292,8 +292,9 @@ fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
 }
 
 enum ParseError {
-    BadZshExtendedHeader,
     BadFishHeader,
+    BadZshExtendedHeader,
+    BlankCommand,
     ParseIntError,
     Utf8Error,
 }
@@ -313,8 +314,9 @@ impl From<std::str::Utf8Error> for ParseError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::BadZshExtendedHeader => write!(f, "bad zsh extended header"),
             ParseError::BadFishHeader => write!(f, "bad fish header"),
+            ParseError::BadZshExtendedHeader => write!(f, "bad zsh extended header"),
+            ParseError::BlankCommand => write!(f, "blank command"),
             ParseError::ParseIntError => write!(f, "parse int error"),
             ParseError::Utf8Error => write!(f, "utf8 error"),
         }
@@ -426,8 +428,12 @@ fn parse_sh_entries<'a, R>(
 where
     R: BufRead,
 {
-    ShellHistLines::new(reader).map(move |entry_res| {
-        let (line, line_no) = entry_res?;
+    ShellHistLines::new(reader).filter_map(move |entry_res| {
+        let (line, line_no) = match entry_res {
+            Ok((line, line_no)) => (line, line_no),
+            Err(e) => return Some(Err(e)),
+        };
+
         let command = if let Ok(s) = str::from_utf8(&line) {
             s.to_string()
         } else {
@@ -440,12 +446,23 @@ where
             eprintln!("{lossy}");
             lossy.to_string()
         };
-        Ok(HistoryEntry {
+
+        // Skip blank commands with a warning
+        if is_blank_command(&command) {
+            if let Some(path) = &ctx.filename {
+                eprintln!("{}:{line_no}: skipping blank command", path.display());
+            } else {
+                eprintln!(":{line_no}: skipping blank command");
+            }
+            return None;
+        }
+
+        Some(Ok(HistoryEntry {
             timestamp: ctx.epoch,
             duration: None,
             command,
             paths: None,
-        })
+        }))
     })
 }
 
@@ -525,7 +542,16 @@ fn parse_zsh_raw_entry(
         lossy.to_string()
     };
 
-    assert!(!command.is_empty(), "command is required");
+    // Skip blank commands with a warning
+    if is_blank_command(&command) {
+        if let Some(path) = &ctx.filename {
+            eprintln!("{}:{line_no}: skipping blank command", path.display());
+        } else {
+            eprintln!(":{line_no}: skipping blank command");
+        }
+        return Err(ParseError::BlankCommand);
+    }
+
     assert!(timestamp.is_some(), "timestamp is required");
     assert!(duration.is_some(), "duration is required");
 
@@ -661,6 +687,16 @@ fn parse_fish_raw_entry(
         unescape_fish(&lossy)
     };
 
+    // Skip blank commands with a warning
+    if is_blank_command(&command) {
+        if let Some(path) = &ctx.filename {
+            eprintln!("{}:{line_no}: skipping blank command", path.display());
+        } else {
+            eprintln!(":{line_no}: skipping blank command");
+        }
+        return Err(ParseError::BlankCommand);
+    }
+
     if lines.len() < 2 {
         return Err(ParseError::BadFishHeader);
     }
@@ -704,6 +740,16 @@ fn parse_fish_raw_entry(
         command,
         paths: if paths.is_empty() { None } else { Some(paths) },
     })
+}
+
+/// Checks if a command is blank (empty or contains only spaces).
+///
+/// This function is used to validate that commands are not blank before
+/// creating HistoryEntry instances, as shells don't allow blank commands.
+/// Commands with newlines, tabs, or other characters are not considered blank.
+#[must_use]
+fn is_blank_command(command: &str) -> bool {
+    command.is_empty() || command.chars().all(|c| c == ' ' || c == '\t')
 }
 
 fn unescape_fish(s: &str) -> String {
