@@ -14,3 +14,4 @@ echo foo\\
 echo foo\nbar
 echo foo \ bar
 echo foo \\ bar
+echo �

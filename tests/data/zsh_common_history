@@ -14,3 +14,4 @@ echo bar
 : 1700000009:0;echo foo\nbar
 : 1700000010:0;echo foo \ bar
 : 1700000011:0;echo foo \\ bar
+: 1700000012:0;echo �

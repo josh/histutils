@@ -373,7 +373,7 @@ mod sh {
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(stdout.trim(), "11");
+        assert_eq!(stdout.trim(), "12");
     }
 
     #[test]
@@ -441,6 +441,21 @@ mod sh {
 
         assert!(output.status.success());
         assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn roundtrip_sh_fish_replacement_char() {
+        let data_file = test_data_path("sh_history");
+
+        let fish_output = histutils(&["--output-format", "fish", "--epoch", "42", &data_file]);
+        assert!(fish_output.status.success());
+        let fish_str = String::from_utf8(fish_output.stdout).expect("failed to convert to string");
+        assert!(fish_str.contains("cmd: echo �"));
+
+        let sh_output = histutils_with_stdin(&["--output-format", "sh"], fish_str.as_bytes());
+        assert!(sh_output.status.success());
+        let sh_str = String::from_utf8(sh_output.stdout).expect("failed to convert to string");
+        assert!(sh_str.contains("echo �"));
     }
 
     #[test]
@@ -532,7 +547,7 @@ mod zsh {
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(stdout.trim(), "11");
+        assert_eq!(stdout.trim(), "12");
     }
 
     #[test]
@@ -581,7 +596,7 @@ mod zsh {
         let output = histutils(&["--output-format", "zsh", "--epoch=42", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-        assert_eq!(stdout.matches(": ").count(), 12);
+        assert_eq!(stdout.matches(": ").count(), 13);
     }
 
     #[test]
@@ -633,6 +648,21 @@ mod zsh {
 
         assert!(output.status.success());
         assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn roundtrip_zsh_fish_replacement_char() {
+        let data_file = test_data_path("zsh_common_history");
+
+        let fish_output = histutils(&["--output-format", "fish", &data_file]);
+        assert!(fish_output.status.success());
+        let fish_str = String::from_utf8(fish_output.stdout).expect("failed to convert to string");
+        assert!(fish_str.contains("- cmd: echo �"));
+
+        let zsh_output = histutils_with_stdin(&["--output-format", "zsh"], fish_str.as_bytes());
+        assert!(zsh_output.status.success());
+        let zsh_str = String::from_utf8(zsh_output.stdout).expect("failed to convert to string");
+        assert!(zsh_str.contains(": 1700000012:0;echo �"));
     }
 
     #[test]
@@ -798,7 +828,7 @@ mod fish {
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(stdout.trim(), "11");
+        assert_eq!(stdout.trim(), "12");
     }
 
     #[test]
@@ -871,6 +901,21 @@ mod fish {
 
         assert!(output.status.success());
         assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn roundtrip_fish_zsh_replacement_char() {
+        let data_file = test_data_path("fish_common_history");
+
+        let zsh_output = histutils(&["--output-format", "zsh", &data_file]);
+        assert!(zsh_output.status.success());
+        let zsh_str = String::from_utf8(zsh_output.stdout).expect("failed to convert to string");
+        assert!(zsh_str.contains(": 1700000012:0;echo �"));
+
+        let fish_output = histutils_with_stdin(&["--output-format", "fish"], zsh_str.as_bytes());
+        assert!(fish_output.status.success());
+        let fish_str = String::from_utf8(fish_output.stdout).expect("failed to convert to string");
+        assert!(fish_str.contains("- cmd: echo �\n  when: 1700000012\n"));
     }
 
     #[test]
@@ -1055,7 +1100,7 @@ mod fish {
         let output = histutils(&["--output-format", "fish", "--epoch", "42", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-        assert_eq!(stdout.matches("- cmd:").count(), 11);
+        assert_eq!(stdout.matches("- cmd:").count(), 12);
     }
 }
 
