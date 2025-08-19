@@ -62,28 +62,34 @@ fn main() -> io::Result<()> {
         }
         let fmt = format.unwrap();
 
-        let mut writer = if let Some(path) = config.output {
-            OutputWriter::File(File::create(path)?)
-        } else {
-            OutputWriter::Stdout(io::stdout())
-        };
-
-        if let Err(err) = write_entries(&mut writer, history.entries, fmt) {
-            let msg = err.to_string();
-            if err.kind() == io::ErrorKind::InvalidData && msg == "entry missing required timestamp"
-            {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                eprintln!(
-                    "usage: --epoch={now} required when exporting timestampless entries to {}",
-                    fmt.as_str()
-                );
+        let mut writers = Vec::with_capacity(config.outputs.len());
+        for path in &config.outputs {
+            if path == "-" {
+                writers.push(OutputWriter::Stdout(io::stdout()));
             } else {
-                eprintln!("{msg}");
+                writers.push(OutputWriter::File(File::create(path)?));
             }
-            process::exit(1);
+        }
+
+        for writer in &mut writers {
+            if let Err(err) = write_entries(writer, history.entries.iter().cloned(), fmt) {
+                let msg = err.to_string();
+                if err.kind() == io::ErrorKind::InvalidData
+                    && msg == "entry missing required timestamp"
+                {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    eprintln!(
+                        "usage: --epoch={now} required when exporting timestampless entries to {}",
+                        fmt.as_str()
+                    );
+                } else {
+                    eprintln!("{msg}");
+                }
+                process::exit(1);
+            }
         }
     }
 
@@ -96,7 +102,7 @@ struct ArgError(String);
 #[derive(Debug, Default)]
 struct Config {
     output_format: Option<ShellFormat>,
-    output: Option<String>,
+    outputs: Vec<String>,
     paths: Vec<String>,
     count: bool,
     epoch: Option<u64>,
@@ -121,7 +127,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
             }
             "--output" | "-o" => {
                 if let Some(path) = args.next() {
-                    config.output = Some(path.clone());
+                    config.outputs.push(path.clone());
                 } else {
                     return Err(ArgError(format!("{arg} requires a value")));
                 }
@@ -168,6 +174,10 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 config.paths.push(arg.clone());
             }
         }
+    }
+
+    if config.outputs.is_empty() {
+        config.outputs.push("-".to_string());
     }
 
     if config.paths.is_empty() {
