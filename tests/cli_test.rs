@@ -124,6 +124,61 @@ fn bad_format() {
 }
 
 #[test]
+fn output_format_requires_value() {
+    let output = histutils(&["--output-format"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "--output-format requires a value\n");
+}
+
+#[test]
+fn bad_format_equals() {
+    let output = histutils(&["--output-format=foo"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: unknown --output-format=foo\n");
+}
+
+#[test]
+fn output_requires_value() {
+    let output = histutils(&["--output"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "--output requires a value\n");
+}
+
+#[test]
+fn invalid_epoch_value() {
+    let output = histutils(&["--epoch", "abc"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "invalid epoch value: abc\n");
+}
+
+#[test]
+fn epoch_equals_invalid() {
+    let output = histutils(&["--epoch=abc"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "invalid epoch value: abc\n");
+}
+
+#[test]
+fn output_format_equals() {
+    let temp_file = TempFile::with_content("echo hello\n");
+    let output = histutils(&["--output-format=sh", temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo hello\n");
+}
+
+#[test]
 fn missing_epoch_value() {
     let output = histutils(&["--epoch"]);
 
@@ -375,6 +430,35 @@ mod sh {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(stderr, ":2: skipping blank command\n");
     }
+
+    #[test]
+    fn invalid_utf8_file_handling() {
+        let temp_file = TempFile::with_bytes(b"echo hello\xFF\nok\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:1: invalid UTF-8\necho hello\u{FFFD}\n"),
+        );
+    }
+
+    #[test]
+    fn skips_blank_commands_with_path() {
+        let temp_file = TempFile::with_content("echo hello\n   \nworld\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr, format!("{temp_path}:2: skipping blank command\n"));
+    }
 }
 
 mod zsh {
@@ -434,7 +518,7 @@ mod zsh {
     #[test]
     fn sh_to_zsh_with_epoch() {
         let data_file = test_data_path("sh_history");
-        let output = histutils(&["--output-format", "zsh", "--epoch", "42", &data_file]);
+        let output = histutils(&["--output-format", "zsh", "--epoch=42", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout.matches(": ").count(), 12);
@@ -812,6 +896,44 @@ mod fish {
                 "{temp_path}:3: skipping blank command\n{temp_path}:3: blank command\n- cmd: \t\t\n  when: 2\n\n"
             )
         );
+    }
+
+    #[test]
+    fn missing_when_stdin() {
+        let input = b"- cmd: echo\n";
+        let output = histutils_with_stdin(&["--count"], input);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "0");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr, ":1: bad fish header\n- cmd: echo\n\n");
+    }
+
+    #[test]
+    fn skips_blank_commands_stdin() {
+        let input = b"- cmd: echo\n  when: 1\n- cmd: \t\t\n  when: 2\n";
+        let output = histutils_with_stdin(&["--count"], input);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "1");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            ":3: skipping blank command\n:3: blank command\n- cmd: \t\t\n  when: 2\n\n",
+        );
+    }
+
+    #[test]
+    fn unescape_edge_cases() {
+        let temp_file =
+            TempFile::with_content("- cmd: echo \\q\n  when: 1\n- cmd: foo\\\n  when: 2\n");
+        let output = histutils(&["--output-format", "sh", temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo \\q\nfoo\\\n");
     }
 
     #[test]
