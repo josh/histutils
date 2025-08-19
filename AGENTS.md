@@ -37,9 +37,9 @@ Run clippy (including pedantic lints) and treat warnings as errors:
 $ cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
-### Zero-Copy Practices
+### Performance
 
-Prefer borrowing and views over owning allocations. Expose cheap accessors like `as_str()` and format directly to writers instead of building intermediate strings. Parse with slice-based methods and only convert at boundaries; avoid allocating unless it materially improves clarity or is required for user-facing messages.
+Prefer borrowing and views over owning allocations. Expose cheap accessors like `as_str()` and format directly to writers instead of building intermediate strings. Parse with slice-based methods and only convert at boundaries; avoid allocating unless it materially improves clarity or is required for user-facing messages. Prefer concrete types and enums over `Box<dyn Trait>` and dynamic dispatch.
 
 ## Building
 

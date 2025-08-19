@@ -217,16 +217,24 @@ where
         let file_format = detect_format(&mut reader);
         original_formats.insert(file_format);
 
-        let entries_iter: Box<dyn Iterator<Item = IoResult<HistoryEntry>>> = match file_format {
-            ShellFormat::Fish => Box::new(parse_fish_entries(&mut reader, &ctx)),
-            ShellFormat::ZshExtended => Box::new(parse_zsh_extended_entries(&mut reader, &ctx)),
-            ShellFormat::Sh => Box::new(parse_sh_entries(&mut reader, &ctx)),
-        };
-
         // Collect all entries from this file, handling errors
         let mut file_entries = Vec::new();
-        for entry_result in entries_iter {
-            file_entries.push(entry_result?);
+        match file_format {
+            ShellFormat::Fish => {
+                for entry_result in parse_fish_entries(&mut reader, &ctx) {
+                    file_entries.push(entry_result?);
+                }
+            }
+            ShellFormat::ZshExtended => {
+                for entry_result in parse_zsh_extended_entries(&mut reader, &ctx) {
+                    file_entries.push(entry_result?);
+                }
+            }
+            ShellFormat::Sh => {
+                for entry_result in parse_sh_entries(&mut reader, &ctx) {
+                    file_entries.push(entry_result?);
+                }
+            }
         }
 
         entries_iterators.push(file_entries.into_iter());

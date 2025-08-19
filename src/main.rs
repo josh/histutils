@@ -1,10 +1,8 @@
 use histutils::{Context, HistoryFile, ShellFormat, parse_entries_with_ctx, write_entries};
 use std::env;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::process;
-
-use std::io::Write;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -28,19 +26,19 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    let history_files: Vec<HistoryFile<Box<dyn BufRead>>> = config
+    let history_files: Vec<HistoryFile<InputReader>> = config
         .paths
         .into_iter()
-        .map(|p| -> io::Result<HistoryFile<Box<dyn BufRead>>> {
+        .map(|p| -> io::Result<HistoryFile<InputReader>> {
             if p == "-" {
                 Ok(HistoryFile {
-                    reader: Box::new(BufReader::new(io::stdin())),
+                    reader: InputReader::Stdin(BufReader::new(io::stdin())),
                     path: None,
                 })
             } else {
                 let f = File::open(&p)?;
                 Ok(HistoryFile {
-                    reader: Box::new(BufReader::new(f)),
+                    reader: InputReader::File(BufReader::new(f)),
                     path: Some(std::path::PathBuf::from(p)),
                 })
             }
@@ -64,10 +62,10 @@ fn main() -> io::Result<()> {
         }
         let fmt = format.unwrap();
 
-        let mut writer: Box<dyn Write> = if let Some(path) = config.output {
-            Box::new(File::create(path)?)
+        let mut writer = if let Some(path) = config.output {
+            OutputWriter::File(File::create(path)?)
         } else {
-            Box::new(io::stdout())
+            OutputWriter::Stdout(io::stdout())
         };
 
         if let Err(err) = write_entries(&mut writer, history.entries, fmt) {
@@ -185,5 +183,70 @@ fn parse_format_opt(s: &str) -> Option<ShellFormat> {
         "zsh" => Some(ShellFormat::ZshExtended),
         "fish" => Some(ShellFormat::Fish),
         _ => None,
+    }
+}
+
+enum InputReader {
+    Stdin(BufReader<io::Stdin>),
+    File(BufReader<File>),
+}
+
+impl io::Read for InputReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            InputReader::Stdin(reader) => reader.read(buf),
+            InputReader::File(reader) => reader.read(buf),
+        }
+    }
+}
+
+impl BufRead for InputReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        match self {
+            InputReader::Stdin(reader) => reader.fill_buf(),
+            InputReader::File(reader) => reader.fill_buf(),
+        }
+    }
+
+    fn consume(&mut self, amt: usize) {
+        match self {
+            InputReader::Stdin(reader) => reader.consume(amt),
+            InputReader::File(reader) => reader.consume(amt),
+        }
+    }
+
+    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> io::Result<usize> {
+        match self {
+            InputReader::Stdin(reader) => reader.read_until(byte, buf),
+            InputReader::File(reader) => reader.read_until(byte, buf),
+        }
+    }
+
+    fn read_line(&mut self, buf: &mut String) -> io::Result<usize> {
+        match self {
+            InputReader::Stdin(reader) => reader.read_line(buf),
+            InputReader::File(reader) => reader.read_line(buf),
+        }
+    }
+}
+
+enum OutputWriter {
+    Stdout(io::Stdout),
+    File(File),
+}
+
+impl Write for OutputWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            OutputWriter::Stdout(stdout) => stdout.write(buf),
+            OutputWriter::File(file) => file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            OutputWriter::Stdout(stdout) => stdout.flush(),
+            OutputWriter::File(file) => file.flush(),
+        }
     }
 }
