@@ -504,6 +504,23 @@ fn count_empty_file() {
     assert_eq!(stdout.trim(), "0");
 }
 
+#[test]
+fn preserves_duplicate_commands_sh_format() {
+    let temp_file1 = TempFile::with_content("echo foo\necho foo\necho bar\n");
+    let temp_file2 = TempFile::with_content("echo bar\necho baz\n");
+
+    let output = histutils(&[
+        "--output-format",
+        "sh",
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo foo\necho foo\necho bar\necho bar\necho baz\n");
+}
+
 mod fish {
     use super::*;
 
