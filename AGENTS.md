@@ -21,6 +21,10 @@ Run tests with:
 $ cargo test
 ```
 
+### Testing
+
+Only write integration tests in `tests/cli_test.rs` that test via CLI binary invocation. Never import `lib.rs` or write unit tests.
+
 ## Formatting
 
 Format code with:
