@@ -487,7 +487,10 @@ mod sh {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "2");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, format!("{temp_path}:2: skipping blank command\n"));
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:2: skipping blank command\n   \n")
+        );
     }
 }
 
@@ -933,7 +936,7 @@ mod fish {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "0");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert_eq!(stderr, ":1: bad fish header\n- cmd: echo\n\n");
+        assert_eq!(stderr, ":1: bad fish header\n- cmd: echo\n");
     }
 
     #[test]
@@ -947,7 +950,7 @@ mod fish {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr,
-            ":3: skipping blank command\n:3: blank command\n- cmd: \t\t\n  when: 2\n\n",
+            ":3: skipping blank command\n- cmd: \t\t\n  when: 2\n",
         );
     }
 
