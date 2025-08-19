@@ -484,6 +484,26 @@ fn detect_output_format_fish_multiple() {
     );
 }
 
+#[test]
+fn count_empty_stdin() {
+    let output = histutils_with_stdin(&["--count"], b"");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "0");
+}
+
+#[test]
+fn count_empty_file() {
+    let temp_file = TempFile::with_content("");
+
+    let output = histutils(&["--count", temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "0");
+}
+
 mod fish {
     use super::*;
 

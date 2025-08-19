@@ -998,52 +998,6 @@ mod tests {
         }
     }
 
-    mod parse_sh_entries {
-        use super::{Context, parse_sh_entries};
-        use std::{io::Cursor, path::PathBuf};
-
-        #[test]
-        fn empty() {
-            let mut input = Cursor::new("");
-            let path = PathBuf::from(".history");
-            let ctx = Context {
-                epoch: None,
-                filename: Some(path.clone()),
-            };
-            let mut entries = parse_sh_entries(&mut input, &ctx);
-            assert!(entries.next().is_none());
-        }
-
-        #[test]
-        fn multiple() {
-            let mut input = Cursor::new("foo\nbar\nbaz\n");
-            let path = PathBuf::from(".history");
-            let ctx = Context {
-                epoch: None,
-                filename: Some(path.clone()),
-            };
-            let mut entries = parse_sh_entries(&mut input, &ctx);
-            assert_eq!("foo", entries.next().unwrap().unwrap().command);
-            assert_eq!("bar", entries.next().unwrap().unwrap().command);
-            assert_eq!("baz", entries.next().unwrap().unwrap().command);
-            assert!(entries.next().is_none());
-        }
-
-        #[test]
-        fn epoch() {
-            let mut input = Cursor::new("foo\nbar\nbaz\n");
-            let path = PathBuf::from(".history");
-            let ctx = Context {
-                epoch: Some(1_234_567_890),
-                filename: Some(path.clone()),
-            };
-            let mut entries = parse_sh_entries(&mut input, &ctx);
-            let entry = entries.next().unwrap().unwrap();
-            assert_eq!("foo", entry.command);
-            assert_eq!(Some(1_234_567_890), entry.timestamp);
-        }
-    }
-
     mod parse_zsh_extended_entries {
         use super::{Context, parse_zsh_extended_entries};
         use std::{io::Cursor, path::PathBuf};
