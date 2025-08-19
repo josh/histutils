@@ -72,13 +72,6 @@ where
 }
 
 impl<'a> From<&'a str> for HistoryFile<Cursor<&'a str>> {
-    /// Creates a new `HistoryFile` instance from a string slice.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let history: histutils::HistoryFile<_> = ": 1234567890:0;echo hello\n".into();
-    /// ```
     fn from(content: &'a str) -> Self {
         Self {
             reader: Cursor::new(content),
@@ -88,13 +81,6 @@ impl<'a> From<&'a str> for HistoryFile<Cursor<&'a str>> {
 }
 
 impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
-    /// Creates a new `HistoryFile` instance from a byte array.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let history: histutils::HistoryFile<_> = b": 1234567890:0;echo hello\n".into();
-    /// ```
     fn from(content: &'a [u8; N]) -> Self {
         Self {
             reader: Cursor::new(content.as_slice()),
@@ -103,26 +89,7 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
     }
 }
 
-/// Detects the shell format of `BufRead` type.
-///
-/// Peeks into buffer and does not advance the reader position.
-///
-/// # Examples
-///
-/// ```
-/// let mut reader = std::io::Cursor::new(b"echo hello\n");
-/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Sh);
-///
-/// let mut reader = std::io::Cursor::new(b": 1234:0;echo hello\n");
-/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::ZshExtended);
-///
-/// let mut reader = std::io::Cursor::new(b"- cmd: echo hello\n  when: 1234\n");
-/// assert_eq!(histutils::detect_format(&mut reader), histutils::ShellFormat::Fish);
-/// ```
-///
-/// # Returns
-/// The detected shell format.
-pub fn detect_format<R>(reader: &mut R) -> ShellFormat
+fn detect_format<R>(reader: &mut R) -> ShellFormat
 where
     R: BufRead,
 {
@@ -136,61 +103,12 @@ where
     }
 }
 
-/// Parses history entries from multiple files.
-///
-/// This function combines format detection and entry parsing into a single
-/// operation. It first detects the shell format used by the history files,
-/// then parses all entries and merges them into a timestamp-sorted collection.
-///
-/// # Arguments
-///
-/// * `files` - An iterator of `HistoryFile` instances to parse and analyze.
-///
-/// # Examples
-///
-/// ```
-/// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
-/// let bash_history: histutils::HistoryFile<_> = "echo world\nls\n".into();
-///
-/// let history = histutils::parse_entries([zsh_history, bash_history]).unwrap();
-/// assert!(history.entries.len() >= 2);
-/// assert!(history.original_formats.len() == 2); // Mixed formats
-/// ```
-///
-/// # Returns
-///
-/// Returns parsed `HistoryEntries` struct.
-///
-/// # Errors
-///
-/// Returns an error if reading from any file fails or if invalid metadata
-/// is encountered in extended shell formats.
-pub fn parse_entries<R, I>(files: I) -> IoResult<HistoryEntries>
-where
-    R: BufRead,
-    I: IntoIterator<Item = HistoryFile<R>>,
-{
-    parse_entries_with_ctx(files, &Context::default())
-}
-
 /// Parses history entries from multiple files and fallback timestamp epoch.
 ///
 /// # Arguments
 ///
 /// * `files` - An iterator of `HistoryFile` instances to parse and analyze.
 /// * `epoch` - Fallback timestamp epoch to use if no timestamp is found.
-///
-/// # Examples
-///
-/// ```
-/// let zsh_history: histutils::HistoryFile<_> = ": 1609459200:5;echo hello\n: 1609459300:2;ls -la\n".into();
-/// let bash_history: histutils::HistoryFile<_> = "echo world\nls\n".into();
-///
-/// let ctx = histutils::Context::default();
-/// let history = histutils::parse_entries_with_ctx([zsh_history, bash_history], &ctx).unwrap();
-/// assert!(history.entries.len() >= 2);
-/// assert!(history.original_formats.len() == 2); // Mixed formats
-/// ```
 ///
 /// # Returns
 ///
@@ -742,11 +660,6 @@ fn parse_fish_raw_entry(
     })
 }
 
-/// Checks if a command is blank (empty or contains only spaces).
-///
-/// This function is used to validate that commands are not blank before
-/// creating `HistoryEntry` instances, as shells don't allow blank commands.
-/// Commands with newlines, tabs, or other characters are not considered blank.
 #[must_use]
 fn is_blank_command(command: &str) -> bool {
     command.is_empty() || command.chars().all(|c| c == ' ' || c == '\t')
@@ -791,29 +704,6 @@ fn unescape_fish(s: &str) -> String {
 /// # Errors
 ///
 /// Returns an error if writing to the output fails.
-///
-/// # Example
-///
-/// ```
-/// let entries = vec![
-///     histutils::HistoryEntry {
-///         timestamp: Some(1640995200),
-///         duration: Some(1000),
-///         command: "ls -la".to_string(),
-///         paths: Some(vec!["/home/user".to_string()]),
-///     },
-///     histutils::HistoryEntry {
-///         timestamp: Some(1640995260),
-///         duration: Some(500),
-///         command: "git status".to_string(),
-///         paths: Some(vec!["/home/user/project".to_string()]),
-///     },
-/// ];
-///
-/// let mut output = std::io::Cursor::new(Vec::new());
-/// histutils::write_entries(&mut output, entries, histutils::ShellFormat::Sh)?;
-/// # Ok::<(), std::io::Error>(())
-/// ```
 pub fn write_entries<W, I>(writer: &mut W, entries: I, format: ShellFormat) -> IoResult<()>
 where
     W: Write,
@@ -826,24 +716,7 @@ where
     }
 }
 
-/// Writes history entries in sh/bash shell format.
-///
-/// This function outputs history entries as plain command lines, one per line,
-/// with proper escaping for newlines and backslashes.
-///
-/// # Arguments
-///
-/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
-/// * `entries` - An iterator over `HistoryEntry` items to be written in sh format
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
-///
-/// # Errors
-///
-/// Returns an error if writing to the output fails.
-pub fn write_sh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+fn write_sh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
 where
     W: Write,
     I: IntoIterator<Item = HistoryEntry>,
@@ -854,25 +727,7 @@ where
     Ok(())
 }
 
-/// Writes history entries in zsh extended format.
-///
-/// This function outputs history entries in zsh's extended history format,
-/// including timestamps, duration, and commands with proper escaping.
-///
-/// # Arguments
-///
-/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
-/// * `entries` - An iterator over `HistoryEntry` items to be written in zsh extended format
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
-///
-/// # Errors
-///
-/// Returns an error if writing to the output fails or if any entry has a `None` timestamp,
-/// as zsh format requires timestamps.
-pub fn write_zsh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+fn write_zsh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
 where
     W: Write,
     I: IntoIterator<Item = HistoryEntry>,
@@ -895,29 +750,7 @@ where
     Ok(())
 }
 
-/// Writes history entries in Fish shell format.
-///
-/// This function outputs history entries in Fish shell's YAML-based history format,
-/// including command text, timestamps, and associated file paths.
-///
-/// # Arguments
-///
-/// * `writer` - A mutable reference to any type implementing `Write` (e.g., `File`, `Vec<u8>`, `stdout`)
-/// * `entries` - An iterator over `HistoryEntry` items to be written in Fish format
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success, or an `io::Result` error if writing fails.
-///
-/// # Errors
-///
-/// Returns an error if writing to the output fails or if any entry has a `None` timestamp,
-/// as fish format requires timestamps.
-///
-/// # Panics
-///
-/// Panics if paths is `Some` but empty, which should not happen in normal usage.
-pub fn write_fish_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
+fn write_fish_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
 where
     W: Write,
     I: IntoIterator<Item = HistoryEntry>,
@@ -946,39 +779,7 @@ where
     Ok(())
 }
 
-/// Merges multiple iterators of history entries into a single iterator.
-///
-/// This function takes iterators of `HistoryEntry` and merges them based on timestamp and command.
-/// Entries with the same timestamp and command are merged using the `merge_entries` function.
-/// Entries without timestamps are never merged and are kept as-is.
-///
-/// # Arguments
-///
-/// * `entries_iterators` - An iterator of iterators, where each inner iterator yields `HistoryEntry`
-///
-/// # Returns
-///
-/// An iterator over merged `HistoryEntry` items.
-///
-/// # Examples
-///
-/// ```
-/// use histutils::{HistoryEntry, merge_history_entries};
-///
-/// let entries1 = vec![
-///     HistoryEntry { timestamp: Some(1000), command: "echo hello".to_string(), ..Default::default() },
-///     HistoryEntry { timestamp: Some(2000), command: "ls".to_string(), ..Default::default() },
-/// ];
-///
-/// let entries2 = vec![
-///     HistoryEntry { timestamp: Some(1000), command: "echo hello".to_string(), ..Default::default() },
-///     HistoryEntry { timestamp: Some(3000), command: "pwd".to_string(), ..Default::default() },
-/// ];
-///
-/// let merged: Vec<_> = merge_history_entries(vec![entries1.into_iter(), entries2.into_iter()]).collect();
-/// assert_eq!(merged.len(), 3); // 1000:echo hello (merged), 2000:ls, 3000:pwd
-/// ```
-pub fn merge_history_entries<I>(entries_iterators: I) -> impl Iterator<Item = HistoryEntry>
+fn merge_history_entries<I>(entries_iterators: I) -> impl Iterator<Item = HistoryEntry>
 where
     I: IntoIterator,
     I::Item: IntoIterator<Item = HistoryEntry>,
