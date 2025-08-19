@@ -240,6 +240,33 @@ fn writes_to_output_file() {
 }
 
 #[test]
+fn count_specified_multiple_times() {
+    let output = histutils(&["--count", "--count"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: --count specified multiple times\n");
+}
+
+#[test]
+fn epoch_specified_multiple_times() {
+    let output = histutils(&["--epoch", "1", "--epoch", "2"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: --epoch specified multiple times\n");
+}
+
+#[test]
+fn output_format_specified_multiple_times() {
+    let output = histutils(&["--output-format=fish", "--output-format=sh"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: --output-format specified multiple times\n");
+}
+
+#[test]
 fn overwrites_existing_output_file() {
     let input_str = ": 123:0;echo hello\n";
     let input_file = TempFile::with_content(input_str);
