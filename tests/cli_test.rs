@@ -647,3 +647,65 @@ fn preserves_commands_with_tabs() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(":2: skipping blank command"));
 }
+
+#[test]
+fn merges_entries_with_duration_preference() {
+    // Test that when merging duplicate entries, non-zero duration is preferred
+    // regardless of which file it comes from
+
+    let temp_file1 = TempFile::with_content(": 1000:5;echo hello\n: 2000:0;echo world\n");
+    let temp_file2 = TempFile::with_content(": 1000:0;echo hello\n: 2000:3;echo world\n");
+
+    let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+    // Should deduplicate and keep the entry with non-zero duration from first file
+    // and from second file, with entries sorted by timestamp
+    let expected_output = ": 1000:5;echo hello\n: 2000:3;echo world\n";
+    assert_eq!(stdout, expected_output);
+}
+
+#[test]
+fn merges_entries_with_paths() {
+    // Test that when merging duplicate entries, paths are merged uniquely
+    let temp_file1 =
+        TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /tmp\n");
+    let temp_file2 =
+        TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /home\n");
+
+    let output = histutils(&[
+        "--output-format",
+        "fish",
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    // Should deduplicate and merge paths
+    assert!(stdout.contains("cargo build"));
+    assert!(stdout.contains("paths:"));
+    assert!(stdout.contains("- /tmp"));
+    assert!(stdout.contains("- /home"));
+    // Should only have one entry
+    assert_eq!(stdout.matches("cargo build").count(), 1);
+}
+
+#[test]
+fn preserves_timestampless_entries() {
+    let temp_file1 = TempFile::with_content("echo hello\n");
+    let temp_file2 = TempFile::with_content("echo hello\n");
+
+    let output = histutils(&[
+        "--output-format",
+        "sh",
+        temp_file1.path_str(),
+        temp_file2.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo hello\necho hello\n");
+}
