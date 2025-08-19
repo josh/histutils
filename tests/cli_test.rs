@@ -174,6 +174,54 @@ fn overwrites_existing_output_file() {
 }
 
 #[test]
+fn writes_to_multiple_output_files() {
+    let input_str = ": 123:0;echo hello\n";
+    let input_file = TempFile::with_content(input_str);
+    let output_file1 = TempFile::with_content("");
+    let output_file2 = TempFile::with_content("");
+
+    let output = histutils(&[
+        "--output",
+        output_file1.path_str(),
+        "--output",
+        output_file2.path_str(),
+        input_file.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let output_str1 =
+        std::fs::read_to_string(&output_file1.path).expect("failed to read output file");
+    let output_str2 =
+        std::fs::read_to_string(&output_file2.path).expect("failed to read output file");
+    assert_eq!(output_str1, input_str);
+    assert_eq!(output_str2, input_str);
+}
+
+#[test]
+fn writes_to_stdout_and_file() {
+    let input_str = ": 123:0;echo hello\n";
+    let input_file = TempFile::with_content(input_str);
+    let output_file = TempFile::with_content("");
+
+    let output = histutils(&[
+        "--output",
+        "-",
+        "--output",
+        output_file.path_str(),
+        input_file.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, input_str);
+    let file_output =
+        std::fs::read_to_string(&output_file.path).expect("failed to read output file");
+    assert_eq!(file_output, input_str);
+}
+
+#[test]
 fn sh_invalid_utf8_handling() {
     let output = histutils_with_stdin(&["--count"], b"echo hello\xFF\nok\n");
 
