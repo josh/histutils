@@ -23,6 +23,18 @@ impl TempFile {
         Self { path: temp_file }
     }
 
+    /// Creates a new temporary file with the given raw bytes
+    fn with_bytes(bytes: &[u8]) -> Self {
+        let temp_dir = std::env::temp_dir();
+        let pid = u128::from(process::id()); // 32 bits on all tier-1 platforms
+        let n = u128::from(COUNTER.fetch_add(1, Ordering::Relaxed));
+        let unique_id = (pid << 96) | n;
+        let temp_file = temp_dir.join(format!("histutils_test_{unique_id}"));
+        std::fs::write(&temp_file, bytes).expect("failed to write temp file");
+
+        Self { path: temp_file }
+    }
+
     /// Gets the path as a string slice
     fn path_str(&self) -> &str {
         self.path
@@ -346,6 +358,22 @@ mod zsh {
     }
 
     #[test]
+    fn zsh_invalid_utf8_file_handling() {
+        let temp_file = TempFile::with_bytes(b": 123:0;echo \xFF\n: 124:0;ok\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:1: invalid UTF-8\necho \u{FFFD}\n")
+        );
+    }
+
+    #[test]
     fn sh_to_zsh_missing_epoch() {
         let data_file = test_data_path("sh_history");
 
@@ -449,6 +477,43 @@ mod zsh {
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout, ": 100:1;ok\n");
+    }
+
+    #[test]
+    fn zsh_bad_extended_headers() {
+        let content = b": 123;0;cmd\n: :0;cmd\n: 1:0cmd\n: 1:;cmd\n";
+        let temp_file = TempFile::with_bytes(content);
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "0");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!(
+                "{temp_path}:1: bad zsh extended header\n: 123;0;cmd\n{temp_path}:2: bad zsh extended header\n: :0;cmd\n{temp_path}:3: bad zsh extended header\n: 1:0cmd\n{temp_path}:4: bad zsh extended header\n: 1:;cmd\n"
+            )
+        );
+    }
+
+    #[test]
+    fn zsh_skips_blank_commands_with_path() {
+        let temp_file = TempFile::with_content(": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--count", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!(
+                "{temp_path}:2: skipping blank command\n{temp_path}:2: blank command\n: 2:0;\t\t\n"
+            )
+        );
     }
 
     #[test]
