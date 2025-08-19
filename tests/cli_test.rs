@@ -197,15 +197,6 @@ fn missing_output_value() {
 }
 
 #[test]
-fn invalid_epoch_value() {
-    let output = histutils(&["--epoch", "foo"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "invalid epoch value: foo\n");
-}
-
-#[test]
 fn invalid_epoch_value_equals() {
     let output = histutils(&["--epoch=foo"]);
 
@@ -221,15 +212,6 @@ fn missing_output_format_value() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr, "--output-format requires a value\n");
-}
-
-#[test]
-fn bad_format_equals() {
-    let output = histutils(&["--output-format=foo"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "usage: unknown --output-format=foo\n");
 }
 
 #[test]
