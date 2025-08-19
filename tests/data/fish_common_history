@@ -20,3 +20,5 @@
   when: 1700000010
 - cmd: echo foo \\\\ bar
   when: 1700000011
+- cmd: echo �
+  when: 1700000012
