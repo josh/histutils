@@ -4,6 +4,8 @@ cargo build
 echo foo\\
 bar\\
 baz
+\
+
 echo foo\
 echo bar
 echo foo\\bar

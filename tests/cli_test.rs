@@ -168,7 +168,7 @@ fn count_zsh_history() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "10");
+    assert_eq!(stdout.trim(), "11");
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn reads_fish_history() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "10");
+    assert_eq!(stdout.trim(), "11");
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn reads_sh_history() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "10");
+    assert_eq!(stdout.trim(), "11");
 }
 
 #[test]

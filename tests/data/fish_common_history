@@ -6,15 +6,17 @@
   when: 1700000003
 - cmd: echo foo\\\nbar\\\nbaz
   when: 1700000004
-- cmd: echo foo\necho bar
+- cmd: \n
   when: 1700000005
-- cmd: echo foo\\\\bar
+- cmd: echo foo\necho bar
   when: 1700000006
-- cmd: echo foo\\\n: 42:0;echo bar
+- cmd: echo foo\\\\bar
   when: 1700000007
-- cmd: echo foo\\nbar
+- cmd: echo foo\\\n: 42:0;echo bar
   when: 1700000008
-- cmd: echo foo \\ bar
+- cmd: echo foo\\nbar
   when: 1700000009
-- cmd: echo foo \\\\ bar
+- cmd: echo foo \\ bar
   when: 1700000010
+- cmd: echo foo \\\\ bar
+  when: 1700000011

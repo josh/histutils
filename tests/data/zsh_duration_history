@@ -4,11 +4,13 @@
 : 1700000004:0;echo foo\\
 bar\\
 baz
-: 1700000005:0;echo foo\
+: 1700000005:0;\
+
+: 1700000006:0;echo foo\
 echo bar
-: 1700000006:0;echo foo\\bar
-: 1700000007:0;echo foo\\
+: 1700000007:0;echo foo\\bar
+: 1700000008:0;echo foo\\
 : 42:0;echo bar
-: 1700000008:0;echo foo\nbar
-: 1700000009:0;echo foo \ bar
-: 1700000010:0;echo foo \\ bar
+: 1700000009:0;echo foo\nbar
+: 1700000010:0;echo foo \ bar
+: 1700000011:0;echo foo \\ bar
