@@ -187,7 +187,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
 fn parse_format_opt(s: &str) -> Option<ShellFormat> {
     match s {
         "sh" | "bash" => Some(ShellFormat::Sh),
-        "zsh" => Some(ShellFormat::ZshExtended),
+        "zsh-extended" | "zsh" => Some(ShellFormat::ZshExtended),
         "fish" => Some(ShellFormat::Fish),
         _ => None,
     }

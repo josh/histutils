@@ -355,7 +355,7 @@ mod sh {
     }
 
     #[test]
-    fn lossy_zsh_to_sh() {
+    fn lossy_zsh_extended_to_sh() {
         let input_data_file = test_data_path("zsh_common_history");
         let output_data_file = test_data_path("sh_history");
 
@@ -514,11 +514,11 @@ mod sh {
     }
 }
 
-mod zsh {
+mod zsh_extended {
     use super::*;
 
     #[test]
-    fn count_zsh_history() {
+    fn count_zsh_extended_history() {
         let data_file = test_data_path("zsh_common_history");
 
         let output = histutils(&["--count", &data_file]);
@@ -529,7 +529,7 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_invalid_utf8_handling() {
+    fn zsh_extended_invalid_utf8_handling() {
         let output = histutils_with_stdin(&["--count"], b": 123:0;echo hello\xFF\n: 124:0;ok\n");
 
         assert!(output.status.success());
@@ -541,7 +541,7 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_invalid_utf8_file_handling() {
+    fn zsh_extended_invalid_utf8_file_handling() {
         let temp_file = TempFile::with_bytes(b": 123:0;echo \xFF\n: 124:0;ok\n");
         let temp_path = temp_file.path_str();
         let output = histutils(&["--count", temp_path]);
@@ -557,9 +557,19 @@ mod zsh {
     }
 
     #[test]
-    fn sh_to_zsh_sets_timestamp() {
-        let data_file = test_data_path("sh_history");
+    fn zsh_alias_still_works() {
+        let data_file = test_data_path("zsh_common_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
         let output = histutils(&["--output-format", "zsh", &data_file]);
+        assert!(output.status.success());
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn sh_to_zsh_extended_sets_timestamp() {
+        let data_file = test_data_path("sh_history");
+        let output = histutils(&["--output-format", "zsh-extended", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout.matches(": ").count(), 13);
@@ -580,7 +590,7 @@ mod zsh {
 
         let output = histutils(&[
             "--output-format",
-            "zsh",
+            "zsh-extended",
             temp_file1.path_str(),
             temp_file2.path_str(),
         ]);
@@ -595,11 +605,11 @@ mod zsh {
     }
 
     #[test]
-    fn lossless_fish_to_zsh() {
+    fn lossless_fish_to_zsh_extended() {
         let input_data_file = test_data_path("fish_common_history");
         let output_data_file = test_data_path("zsh_common_history");
 
-        let output = histutils(&["--output-format", "zsh", &input_data_file]);
+        let output = histutils(&["--output-format", "zsh-extended", &input_data_file]);
         let actual_output_str =
             String::from_utf8(output.stdout).expect("failed to convert to string");
         let expected_output_str =
@@ -610,11 +620,11 @@ mod zsh {
     }
 
     #[test]
-    fn roundtrip_zsh_common_history() {
+    fn roundtrip_zsh_extended_common_history() {
         let data_file = test_data_path("zsh_common_history");
         let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-        let output = histutils(&["--output-format", "zsh", &data_file]);
+        let output = histutils(&["--output-format", "zsh-extended", &data_file]);
         let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
         assert!(output.status.success());
@@ -622,7 +632,7 @@ mod zsh {
     }
 
     #[test]
-    fn roundtrip_zsh_fish_replacement_char() {
+    fn roundtrip_zsh_extended_fish_replacement_char() {
         let data_file = test_data_path("zsh_common_history");
 
         let fish_output = histutils(&["--output-format", "fish", &data_file]);
@@ -630,18 +640,19 @@ mod zsh {
         let fish_str = String::from_utf8(fish_output.stdout).expect("failed to convert to string");
         assert!(fish_str.contains("- cmd: echo �"));
 
-        let zsh_output = histutils_with_stdin(&["--output-format", "zsh"], fish_str.as_bytes());
+        let zsh_output =
+            histutils_with_stdin(&["--output-format", "zsh-extended"], fish_str.as_bytes());
         assert!(zsh_output.status.success());
         let zsh_str = String::from_utf8(zsh_output.stdout).expect("failed to convert to string");
         assert!(zsh_str.contains(": 1700000012:0;echo �"));
     }
 
     #[test]
-    fn roundtrip_zsh_duration_history() {
+    fn roundtrip_zsh_extended_duration_history() {
         let data_file = test_data_path("zsh_duration_history");
         let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
 
-        let output = histutils(&["--output-format", "zsh", &data_file]);
+        let output = histutils(&["--output-format", "zsh-extended", &data_file]);
         let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
 
         assert!(output.status.success());
@@ -649,7 +660,7 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_bad_history_count() {
+    fn zsh_extended_bad_history_count() {
         let data_file = test_data_path("zsh_bad_history");
 
         let output = histutils(&["--count", &data_file]);
@@ -660,10 +671,10 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_bad_history_to_zsh() {
+    fn zsh_bad_history_to_zsh_extended() {
         let data_file = test_data_path("zsh_bad_history");
 
-        let output = histutils(&["--output-format", "zsh", &data_file]);
+        let output = histutils(&["--output-format", "zsh-extended", &data_file]);
 
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -671,7 +682,7 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_bad_extended_headers() {
+    fn zsh_extended_bad_extended_headers() {
         let content = b": 123;0;cmd\n: :0;cmd\n: 1:0cmd\n: 1:;cmd\n";
         let temp_file = TempFile::with_bytes(content);
         let temp_path = temp_file.path_str();
@@ -690,7 +701,7 @@ mod zsh {
     }
 
     #[test]
-    fn zsh_skips_blank_commands_with_path() {
+    fn zsh_extended_skips_blank_commands_with_path() {
         let temp_file = TempFile::with_content(": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
         let temp_path = temp_file.path_str();
         let output = histutils(&["--count", temp_path]);
@@ -706,7 +717,7 @@ mod zsh {
     }
 
     #[test]
-    fn detect_output_format_zsh() {
+    fn detect_output_format_zsh_extended() {
         let temp_file = TempFile::with_content(": 123:0;echo hello\n");
 
         let output = histutils(&[temp_file.path_str()]);
@@ -717,7 +728,7 @@ mod zsh {
     }
 
     #[test]
-    fn detect_output_format_zsh_multiple() {
+    fn detect_output_format_zsh_extended_multiple() {
         let temp_file1 = TempFile::with_content(": 1:0;echo foo\n");
         let temp_file2 = TempFile::with_content(": 2:0;echo bar\n");
         let temp_file3 = TempFile::with_content(": 3:0;echo baz\n");
@@ -836,7 +847,7 @@ mod fish {
     }
 
     #[test]
-    fn lossless_zsh_to_fish() {
+    fn lossless_zsh_extended_to_fish() {
         let input_data_file = test_data_path("zsh_common_history");
         let output_data_file = test_data_path("fish_common_history");
 
@@ -875,10 +886,10 @@ mod fish {
     }
 
     #[test]
-    fn roundtrip_fish_zsh_replacement_char() {
+    fn roundtrip_fish_zsh_extended_replacement_char() {
         let data_file = test_data_path("fish_common_history");
 
-        let zsh_output = histutils(&["--output-format", "zsh", &data_file]);
+        let zsh_output = histutils(&["--output-format", "zsh-extended", &data_file]);
         assert!(zsh_output.status.success());
         let zsh_str = String::from_utf8(zsh_output.stdout).expect("failed to convert to string");
         assert!(zsh_str.contains(": 1700000012:0;echo �"));
