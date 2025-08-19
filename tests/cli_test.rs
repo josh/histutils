@@ -521,6 +521,52 @@ fn preserves_duplicate_commands_sh_format() {
     assert_eq!(stdout, "echo foo\necho foo\necho bar\necho bar\necho baz\n");
 }
 
+mod zsh {
+    use super::*;
+
+    #[test]
+    fn timestamp_sorting() {
+        let temp_file1 = TempFile::with_content(": 3:0;three\n: 1:0;one\n: 2:0;two\n");
+        let temp_file2 = TempFile::with_content(": 0:0;zero\n: 4:0;four\n");
+
+        let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            ": 0:0;zero\n: 1:0;one\n: 2:0;two\n: 3:0;three\n: 4:0;four\n"
+        );
+    }
+
+    #[test]
+    fn preserves_order_same_timestamp() {
+        let temp_file1 = TempFile::with_content(": 100:0;first\n: 100:0;second\n: 100:0;third\n");
+        let temp_file2 = TempFile::with_content(": 100:0;fourth\n: 100:0;fifth\n");
+
+        let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            ": 100:0;first\n: 100:0;second\n: 100:0;third\n: 100:0;fourth\n: 100:0;fifth\n"
+        );
+    }
+
+    #[test]
+    fn deduplicates_exact_matches() {
+        let temp_file1 = TempFile::with_content(": 1:0;one\n: 1:0;one\n: 2:0;two\n");
+        let temp_file2 = TempFile::with_content(": 1:0;one\n: 2:0;two\n: 3:0;three\n");
+
+        let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 1:0;one\n: 2:0;two\n: 3:0;three\n");
+    }
+}
+
 mod fish {
     use super::*;
 
