@@ -98,7 +98,7 @@ fn prints_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]\n";
+    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--version] [FILE...]\n";
     assert_eq!(stdout, expected_output);
 }
 
@@ -151,24 +151,6 @@ fn output_requires_value() {
 }
 
 #[test]
-fn invalid_epoch_value() {
-    let output = histutils(&["--epoch", "abc"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "invalid epoch value: abc\n");
-}
-
-#[test]
-fn epoch_equals_invalid() {
-    let output = histutils(&["--epoch=abc"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "invalid epoch value: abc\n");
-}
-
-#[test]
 fn output_format_equals() {
     let temp_file = TempFile::with_content("echo hello\n");
     let output = histutils(&["--output-format=sh", temp_file.path_str()]);
@@ -179,30 +161,12 @@ fn output_format_equals() {
 }
 
 #[test]
-fn missing_epoch_value() {
-    let output = histutils(&["--epoch"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "usage: --epoch requires a value\n");
-}
-
-#[test]
 fn missing_output_value() {
     let output = histutils(&["--output"]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr, "--output requires a value\n");
-}
-
-#[test]
-fn invalid_epoch_value_equals() {
-    let output = histutils(&["--epoch=foo"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "invalid epoch value: foo\n");
 }
 
 #[test]
@@ -246,15 +210,6 @@ fn count_specified_multiple_times() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr, "usage: --count specified multiple times\n");
-}
-
-#[test]
-fn epoch_specified_multiple_times() {
-    let output = histutils(&["--epoch", "1", "--epoch", "2"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "usage: --epoch specified multiple times\n");
 }
 
 #[test]
@@ -470,7 +425,7 @@ mod sh {
     fn roundtrip_sh_fish_replacement_char() {
         let data_file = test_data_path("sh_history");
 
-        let fish_output = histutils(&["--output-format", "fish", "--epoch", "42", &data_file]);
+        let fish_output = histutils(&["--output-format", "fish", &data_file]);
         assert!(fish_output.status.success());
         let fish_str = String::from_utf8(fish_output.stdout).expect("failed to convert to string");
         assert!(fish_str.contains("cmd: echo �"));
@@ -602,24 +557,17 @@ mod zsh {
     }
 
     #[test]
-    fn sh_to_zsh_missing_epoch() {
+    fn sh_to_zsh_sets_timestamp() {
         let data_file = test_data_path("sh_history");
-
         let output = histutils(&["--output-format", "zsh", &data_file]);
-
-        assert!(!output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("usage: --epoch="));
-        assert!(stderr.contains("required when exporting timestampless entries to zsh"));
-    }
-
-    #[test]
-    fn sh_to_zsh_with_epoch() {
-        let data_file = test_data_path("sh_history");
-        let output = histutils(&["--output-format", "zsh", "--epoch=42", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout.matches(": ").count(), 13);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            "warning: setting timestamp on entries without one; duplicates may be merged\n"
+        );
     }
 
     #[test]
@@ -1108,22 +1056,17 @@ mod fish {
     }
 
     #[test]
-    fn sh_to_fish_missing_epoch() {
+    fn sh_to_fish_sets_timestamp() {
         let data_file = test_data_path("sh_history");
         let output = histutils(&["--output-format", "fish", &data_file]);
-        assert!(!output.status.success());
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("usage: --epoch="));
-        assert!(stderr.contains("required when exporting timestampless entries to fish"));
-    }
-
-    #[test]
-    fn sh_to_fish_with_epoch() {
-        let data_file = test_data_path("sh_history");
-        let output = histutils(&["--output-format", "fish", "--epoch", "42", &data_file]);
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout.matches("- cmd:").count(), 12);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            "warning: setting timestamp on entries without one; duplicates may be merged\n"
+        );
     }
 }
 

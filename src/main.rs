@@ -16,7 +16,7 @@ fn main() -> io::Result<()> {
 
     if config.print_help {
         println!(
-            "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--epoch EPOCH] [--version] [FILE...]"
+            "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--version] [FILE...]"
         );
         return Ok(());
     }
@@ -45,11 +45,8 @@ fn main() -> io::Result<()> {
         })
         .collect::<io::Result<Vec<_>>>()?;
 
-    let ctx = Context {
-        epoch: config.epoch,
-        ..Default::default()
-    };
-    let history = parse_entries_with_ctx(history_files, &ctx)?;
+    let ctx = Context::default();
+    let mut history = parse_entries_with_ctx(history_files, &ctx)?;
 
     if config.count {
         println!("{}", history.entries.len());
@@ -62,6 +59,25 @@ fn main() -> io::Result<()> {
         }
         let fmt = format.unwrap();
 
+        if matches!(fmt, ShellFormat::ZshExtended | ShellFormat::Fish) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut warned = false;
+            for entry in &mut history.entries {
+                if entry.timestamp.is_none() {
+                    entry.timestamp = Some(now);
+                    warned = true;
+                }
+            }
+            if warned {
+                eprintln!(
+                    "warning: setting timestamp on entries without one; duplicates may be merged"
+                );
+            }
+        }
+
         let mut writers = Vec::with_capacity(config.outputs.len());
         for path in &config.outputs {
             if path == "-" {
@@ -73,21 +89,7 @@ fn main() -> io::Result<()> {
 
         for writer in &mut writers {
             if let Err(err) = write_entries(writer, history.entries.iter().cloned(), fmt) {
-                let msg = err.to_string();
-                if err.kind() == io::ErrorKind::InvalidData
-                    && msg == "entry missing required timestamp"
-                {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    eprintln!(
-                        "usage: --epoch={now} required when exporting timestampless entries to {}",
-                        fmt.as_str()
-                    );
-                } else {
-                    eprintln!("{msg}");
-                }
+                eprintln!("{err}");
                 process::exit(1);
             }
         }
@@ -105,7 +107,6 @@ struct Config {
     outputs: Vec<String>,
     paths: Vec<String>,
     count: bool,
-    epoch: Option<u64>,
     print_help: bool,
     print_version: bool,
 }
@@ -137,22 +138,6 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     return Err(ArgError(format!("{arg} requires a value")));
                 }
             }
-            "--epoch" => {
-                if config.epoch.is_some() {
-                    return Err(ArgError(
-                        "usage: --epoch specified multiple times".to_string(),
-                    ));
-                }
-                if let Some(epoch_str) = args.next() {
-                    if let Ok(e) = epoch_str.parse::<u64>() {
-                        config.epoch = Some(e);
-                    } else {
-                        return Err(ArgError(format!("invalid epoch value: {epoch_str}")));
-                    }
-                } else {
-                    return Err(ArgError("usage: --epoch requires a value".to_string()));
-                }
-            }
             "--output-format" => {
                 if config.output_format.is_some() {
                     return Err(ArgError(
@@ -181,19 +166,6 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 } else {
                     return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
                 };
-            }
-            _ if arg.starts_with("--epoch=") => {
-                if config.epoch.is_some() {
-                    return Err(ArgError(
-                        "usage: --epoch specified multiple times".to_string(),
-                    ));
-                }
-                let epoch_str = &arg["--epoch=".len()..];
-                if let Ok(e) = epoch_str.parse::<u64>() {
-                    config.epoch = Some(e);
-                } else {
-                    return Err(ArgError(format!("invalid epoch value: {epoch_str}")));
-                }
             }
             _ => {
                 config.paths.push(arg.clone());

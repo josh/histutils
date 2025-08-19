@@ -32,7 +32,6 @@ impl ShellFormat {
 
 #[derive(Debug, Default, Clone)]
 pub struct Context {
-    pub epoch: Option<u64>,
     pub filename: Option<PathBuf>,
 }
 
@@ -103,12 +102,11 @@ where
     }
 }
 
-/// Parses history entries from multiple files and fallback timestamp epoch.
+/// Parses history entries from multiple files.
 ///
 /// # Arguments
 ///
 /// * `files` - An iterator of `HistoryFile` instances to parse and analyze.
-/// * `epoch` - Fallback timestamp epoch to use if no timestamp is found.
 ///
 /// # Returns
 ///
@@ -378,7 +376,7 @@ where
         }
 
         Some(Ok(HistoryEntry {
-            timestamp: ctx.epoch,
+            timestamp: None,
             duration: None,
             command,
             paths: None,
