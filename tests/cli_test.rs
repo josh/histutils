@@ -358,6 +358,15 @@ mod zsh {
     }
 
     #[test]
+    fn sh_to_zsh_with_epoch() {
+        let data_file = test_data_path("sh_history");
+        let output = histutils(&["--output-format", "zsh", "--epoch", "42", &data_file]);
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout.matches(": ").count(), 12);
+    }
+
+    #[test]
     fn merges_entries_with_duration_preference() {
         // Test that when merging duplicate entries, non-zero duration is preferred
         // regardless of which file it comes from
@@ -706,6 +715,25 @@ mod fish {
         assert!(stdout.contains("- /home"));
         // Should only have one entry
         assert_eq!(stdout.matches("cargo build").count(), 1);
+    }
+
+    #[test]
+    fn sh_to_fish_missing_epoch() {
+        let data_file = test_data_path("sh_history");
+        let output = histutils(&["--output-format", "fish", &data_file]);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("usage: --epoch="));
+        assert!(stderr.contains("required when exporting timestampless entries to fish"));
+    }
+
+    #[test]
+    fn sh_to_fish_with_epoch() {
+        let data_file = test_data_path("sh_history");
+        let output = histutils(&["--output-format", "fish", "--epoch", "42", &data_file]);
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout.matches("- cmd:").count(), 11);
     }
 }
 
