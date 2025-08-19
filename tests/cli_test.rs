@@ -718,6 +718,27 @@ mod fish {
     }
 
     #[test]
+    fn merges_entries_with_richer_info() {
+        let temp_file1 = TempFile::with_content(": 1000:5;echo hello\n");
+        let temp_file2 =
+            TempFile::with_content("- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "fish",
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            "- cmd: echo hello\n  when: 1000\n  paths:\n    - /tmp\n"
+        );
+    }
+
+    #[test]
     fn sh_to_fish_missing_epoch() {
         let data_file = test_data_path("sh_history");
         let output = histutils(&["--output-format", "fish", &data_file]);
