@@ -161,39 +161,6 @@ fn overwrites_existing_output_file() {
 }
 
 #[test]
-fn count_zsh_history() {
-    let data_file = test_data_path("zsh_common_history");
-
-    let output = histutils(&["--count", &data_file]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "11");
-}
-
-#[test]
-fn reads_fish_history() {
-    let data_file = test_data_path("fish_common_history");
-
-    let output = histutils(&["--count", &data_file]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "11");
-}
-
-#[test]
-fn reads_sh_history() {
-    let data_file = test_data_path("sh_history");
-
-    let output = histutils(&["--count", &data_file]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "11");
-}
-
-#[test]
 fn sh_invalid_utf8_handling() {
     let output = histutils_with_stdin(&["--count"], b"echo hello\xFF\nok\n");
 
@@ -203,285 +170,6 @@ fn sh_invalid_utf8_handling() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
-}
-
-#[test]
-fn zsh_invalid_utf8_handling() {
-    let output = histutils_with_stdin(&["--count"], b": 123:0;echo hello\xFF\n: 124:0;ok\n");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "2");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
-}
-
-#[test]
-fn fish_invalid_utf8_handling() {
-    let output = histutils_with_stdin(
-        &["--count"],
-        b"- cmd: echo hello\xFF\n  when: 123\n- cmd: ok\n  when: 124\n",
-    );
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "2");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
-}
-
-#[test]
-fn roundtrip_sh_history() {
-    let data_file = test_data_path("sh_history");
-    let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
-
-    let output = histutils(&["--output-format", "sh", &data_file]);
-    let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    assert!(output.status.success());
-    assert_eq!(output_str, input_str);
-}
-
-#[test]
-fn roundtrip_zsh_common_history() {
-    let data_file = test_data_path("zsh_common_history");
-    let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
-
-    let output = histutils(&["--output-format", "zsh", &data_file]);
-    let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    assert!(output.status.success());
-    assert_eq!(output_str, input_str);
-}
-
-#[test]
-fn roundtrip_zsh_duration_history() {
-    let data_file = test_data_path("zsh_duration_history");
-    let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
-
-    let output = histutils(&["--output-format", "zsh", &data_file]);
-    let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    assert!(output.status.success());
-    assert_eq!(output_str, input_str);
-}
-
-#[test]
-fn roundtrip_fish_common_history() {
-    let data_file = test_data_path("fish_common_history");
-    let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
-
-    let output = histutils(&["--output-format", "fish", &data_file]);
-    let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    assert!(output.status.success());
-    assert_eq!(output_str, input_str);
-}
-
-#[test]
-fn roundtrip_fish_paths_history() {
-    let data_file = test_data_path("fish_paths_history");
-    let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
-
-    let output = histutils(&["--output-format", "fish", &data_file]);
-    let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    assert!(output.status.success());
-    assert_eq!(output_str, input_str);
-}
-
-#[test]
-fn lossless_zsh_to_fish() {
-    let input_data_file = test_data_path("zsh_common_history");
-    let output_data_file = test_data_path("fish_common_history");
-
-    let output = histutils(&["--output-format", "fish", &input_data_file]);
-    let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-    let expected_output_str =
-        std::fs::read_to_string(&output_data_file).expect("failed to read file");
-
-    assert!(output.status.success());
-    assert_eq!(actual_output_str, expected_output_str);
-}
-
-#[test]
-fn lossless_fish_to_zsh() {
-    let input_data_file = test_data_path("fish_common_history");
-    let output_data_file = test_data_path("zsh_common_history");
-
-    let output = histutils(&["--output-format", "zsh", &input_data_file]);
-    let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-    let expected_output_str =
-        std::fs::read_to_string(&output_data_file).expect("failed to read file");
-
-    assert!(output.status.success());
-    assert_eq!(actual_output_str, expected_output_str);
-}
-
-#[test]
-fn lossy_zsh_to_sh() {
-    let input_data_file = test_data_path("zsh_common_history");
-    let output_data_file = test_data_path("sh_history");
-
-    let output = histutils(&["--output-format", "sh", &input_data_file]);
-    let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-    let expected_output_str =
-        std::fs::read_to_string(&output_data_file).expect("failed to read file");
-
-    assert!(output.status.success());
-    assert_eq!(actual_output_str, expected_output_str);
-}
-
-#[test]
-fn lossy_fish_to_sh() {
-    let input_data_file = test_data_path("fish_common_history");
-    let output_data_file = test_data_path("sh_history");
-
-    let output = histutils(&["--output-format", "sh", &input_data_file]);
-    let actual_output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
-    let expected_output_str =
-        std::fs::read_to_string(&output_data_file).expect("failed to read file");
-
-    assert!(output.status.success());
-    assert_eq!(actual_output_str, expected_output_str);
-}
-
-#[test]
-fn sh_to_zsh_missing_epoch() {
-    let data_file = test_data_path("sh_history");
-
-    let output = histutils(&["--output-format", "zsh", &data_file]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("usage: --epoch="));
-    assert!(stderr.contains("required when exporting timestampless entries to zsh"));
-}
-
-#[test]
-fn zsh_bad_history_count() {
-    let data_file = test_data_path("zsh_bad_history");
-
-    let output = histutils(&["--count", &data_file]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "1");
-}
-
-#[test]
-fn zsh_bad_history_to_zsh() {
-    let data_file = test_data_path("zsh_bad_history");
-
-    let output = histutils(&["--output-format", "zsh", &data_file]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout, ": 100:1;ok\n");
-}
-
-#[test]
-fn output_format_mixed_error() {
-    let temp_file1 = TempFile::with_content(": 1234567891:0;echo foo\n");
-    let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 1234567892\n");
-
-    let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        stderr,
-        "usage: --output-format= required when multiple input formats are given\n",
-    );
-}
-
-#[test]
-fn detect_output_format_sh() {
-    let temp_file = TempFile::with_content("echo hello\n");
-
-    let output = histutils(&[temp_file.path_str()]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, "echo hello\n");
-}
-
-#[test]
-fn detect_output_format_zsh() {
-    let temp_file = TempFile::with_content(": 123:0;echo hello\n");
-
-    let output = histutils(&[temp_file.path_str()]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, ": 123:0;echo hello\n");
-}
-
-#[test]
-fn detect_output_format_fish() {
-    let temp_file = TempFile::with_content("- cmd: echo hello\n  when: 123\n");
-
-    let output = histutils(&[temp_file.path_str()]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, "- cmd: echo hello\n  when: 123\n");
-}
-
-#[test]
-fn detect_output_format_sh_multiple() {
-    let temp_file1 = TempFile::with_content("echo foo\n");
-    let temp_file2 = TempFile::with_content("echo bar\n");
-    let temp_file3 = TempFile::with_content("echo baz\n");
-
-    let output = histutils(&[
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-        temp_file3.path_str(),
-    ]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, "echo foo\necho bar\necho baz\n");
-}
-
-#[test]
-fn detect_output_format_zsh_multiple() {
-    let temp_file1 = TempFile::with_content(": 1:0;echo foo\n");
-    let temp_file2 = TempFile::with_content(": 2:0;echo bar\n");
-    let temp_file3 = TempFile::with_content(": 3:0;echo baz\n");
-
-    let output = histutils(&[
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-        temp_file3.path_str(),
-    ]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, ": 1:0;echo foo\n: 2:0;echo bar\n: 3:0;echo baz\n");
-}
-
-#[test]
-fn detect_output_format_fish_multiple() {
-    let temp_file1 = TempFile::with_content("- cmd: echo foo\n  when: 1\n");
-    let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 2\n");
-    let temp_file3 = TempFile::with_content("- cmd: echo baz\n  when: 3\n");
-
-    let output = histutils(&[
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-        temp_file3.path_str(),
-    ]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(
-        stdout,
-        "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n",
-    );
 }
 
 #[test]
@@ -504,25 +192,283 @@ fn count_empty_file() {
     assert_eq!(stdout.trim(), "0");
 }
 
-#[test]
-fn preserves_duplicate_commands_sh_format() {
-    let temp_file1 = TempFile::with_content("echo foo\necho foo\necho bar\n");
-    let temp_file2 = TempFile::with_content("echo bar\necho baz\n");
+mod sh {
+    use super::*;
 
-    let output = histutils(&[
-        "--output-format",
-        "sh",
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-    ]);
+    #[test]
+    fn reads_sh_history() {
+        let data_file = test_data_path("sh_history");
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, "echo foo\necho foo\necho bar\necho bar\necho baz\n");
+        let output = histutils(&["--count", &data_file]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "11");
+    }
+
+    #[test]
+    fn lossy_zsh_to_sh() {
+        let input_data_file = test_data_path("zsh_common_history");
+        let output_data_file = test_data_path("sh_history");
+
+        let output = histutils(&["--output-format", "sh", &input_data_file]);
+        let actual_output_str =
+            String::from_utf8(output.stdout).expect("failed to convert to string");
+        let expected_output_str =
+            std::fs::read_to_string(&output_data_file).expect("failed to read file");
+
+        assert!(output.status.success());
+        assert_eq!(actual_output_str, expected_output_str);
+    }
+
+    #[test]
+    fn detect_output_format_sh() {
+        let temp_file = TempFile::with_content("echo hello\n");
+
+        let output = histutils(&[temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo hello\n");
+    }
+
+    #[test]
+    fn preserves_commands_with_tabs() {
+        let output = histutils_with_stdin(&["--count"], b"echo hello\n\t\t\nworld\n");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        // Tabs-only line should be skipped as blank
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(":2: skipping blank command"));
+    }
+
+    #[test]
+    fn preserves_timestampless_entries() {
+        let temp_file1 = TempFile::with_content("echo hello\n");
+        let temp_file2 = TempFile::with_content("echo hello\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "sh",
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo hello\necho hello\n");
+    }
+
+    #[test]
+    fn roundtrip_sh_history() {
+        let data_file = test_data_path("sh_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
+
+        let output = histutils(&["--output-format", "sh", &data_file]);
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        assert!(output.status.success());
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn detect_output_format_sh_multiple() {
+        let temp_file1 = TempFile::with_content("echo foo\n");
+        let temp_file2 = TempFile::with_content("echo bar\n");
+        let temp_file3 = TempFile::with_content("echo baz\n");
+
+        let output = histutils(&[
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+            temp_file3.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo foo\necho bar\necho baz\n");
+    }
+
+    #[test]
+    fn preserves_duplicate_commands_sh_format() {
+        let temp_file1 = TempFile::with_content("echo foo\necho foo\necho bar\n");
+        let temp_file2 = TempFile::with_content("echo bar\necho baz\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "sh",
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo foo\necho foo\necho bar\necho bar\necho baz\n");
+    }
+
+    #[test]
+    fn skips_blank_commands() {
+        let output = histutils_with_stdin(&["--count"], b"echo hello\n   \nworld\n");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(":2: skipping blank command"));
+    }
 }
 
 mod zsh {
     use super::*;
+
+    #[test]
+    fn count_zsh_history() {
+        let data_file = test_data_path("zsh_common_history");
+
+        let output = histutils(&["--count", &data_file]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "11");
+    }
+
+    #[test]
+    fn zsh_invalid_utf8_handling() {
+        let output = histutils_with_stdin(&["--count"], b": 123:0;echo hello\xFF\n: 124:0;ok\n");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+    }
+
+    #[test]
+    fn sh_to_zsh_missing_epoch() {
+        let data_file = test_data_path("sh_history");
+
+        let output = histutils(&["--output-format", "zsh", &data_file]);
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("usage: --epoch="));
+        assert!(stderr.contains("required when exporting timestampless entries to zsh"));
+    }
+
+    #[test]
+    fn merges_entries_with_duration_preference() {
+        // Test that when merging duplicate entries, non-zero duration is preferred
+        // regardless of which file it comes from
+
+        let temp_file1 = TempFile::with_content(": 1000:5;echo hello\n: 2000:0;echo world\n");
+        let temp_file2 = TempFile::with_content(": 1000:0;echo hello\n: 2000:3;echo world\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "zsh",
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        // Should deduplicate and keep the entry with non-zero duration from first file
+        // and from second file, with entries sorted by timestamp
+        let expected_output = ": 1000:5;echo hello\n: 2000:3;echo world\n";
+        assert_eq!(stdout, expected_output);
+    }
+
+    #[test]
+    fn lossless_fish_to_zsh() {
+        let input_data_file = test_data_path("fish_common_history");
+        let output_data_file = test_data_path("zsh_common_history");
+
+        let output = histutils(&["--output-format", "zsh", &input_data_file]);
+        let actual_output_str =
+            String::from_utf8(output.stdout).expect("failed to convert to string");
+        let expected_output_str =
+            std::fs::read_to_string(&output_data_file).expect("failed to read file");
+
+        assert!(output.status.success());
+        assert_eq!(actual_output_str, expected_output_str);
+    }
+
+    #[test]
+    fn roundtrip_zsh_common_history() {
+        let data_file = test_data_path("zsh_common_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
+
+        let output = histutils(&["--output-format", "zsh", &data_file]);
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        assert!(output.status.success());
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn roundtrip_zsh_duration_history() {
+        let data_file = test_data_path("zsh_duration_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
+
+        let output = histutils(&["--output-format", "zsh", &data_file]);
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        assert!(output.status.success());
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn zsh_bad_history_count() {
+        let data_file = test_data_path("zsh_bad_history");
+
+        let output = histutils(&["--count", &data_file]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "1");
+    }
+
+    #[test]
+    fn zsh_bad_history_to_zsh() {
+        let data_file = test_data_path("zsh_bad_history");
+
+        let output = histutils(&["--output-format", "zsh", &data_file]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout, ": 100:1;ok\n");
+    }
+
+    #[test]
+    fn detect_output_format_zsh() {
+        let temp_file = TempFile::with_content(": 123:0;echo hello\n");
+
+        let output = histutils(&[temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 123:0;echo hello\n");
+    }
+
+    #[test]
+    fn detect_output_format_zsh_multiple() {
+        let temp_file1 = TempFile::with_content(": 1:0;echo foo\n");
+        let temp_file2 = TempFile::with_content(": 2:0;echo bar\n");
+        let temp_file3 = TempFile::with_content(": 3:0;echo baz\n");
+
+        let output = histutils(&[
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+            temp_file3.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 1:0;echo foo\n: 2:0;echo bar\n: 3:0;echo baz\n");
+    }
 
     #[test]
     fn timestamp_sorting() {
@@ -565,10 +511,133 @@ mod zsh {
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout, ": 1:0;one\n: 2:0;two\n: 3:0;three\n");
     }
+
+    #[test]
+    fn skips_blank_commands() {
+        let output =
+            histutils_with_stdin(&["--count"], b": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(":2: skipping blank command"));
+    }
 }
 
 mod fish {
     use super::*;
+
+    #[test]
+    fn reads_fish_history() {
+        let data_file = test_data_path("fish_common_history");
+
+        let output = histutils(&["--count", &data_file]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "11");
+    }
+
+    #[test]
+    fn lossy_fish_to_sh() {
+        let input_data_file = test_data_path("fish_common_history");
+        let output_data_file = test_data_path("sh_history");
+
+        let output = histutils(&["--output-format", "sh", &input_data_file]);
+        let actual_output_str =
+            String::from_utf8(output.stdout).expect("failed to convert to string");
+        let expected_output_str =
+            std::fs::read_to_string(&output_data_file).expect("failed to read file");
+
+        assert!(output.status.success());
+        assert_eq!(actual_output_str, expected_output_str);
+    }
+
+    #[test]
+    fn fish_invalid_utf8_handling() {
+        let output = histutils_with_stdin(
+            &["--count"],
+            b"- cmd: echo hello\xFF\n  when: 123\n- cmd: ok\n  when: 124\n",
+        );
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "2");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr, ":1: invalid UTF-8\necho hello\u{FFFD}\n");
+    }
+
+    #[test]
+    fn lossless_zsh_to_fish() {
+        let input_data_file = test_data_path("zsh_common_history");
+        let output_data_file = test_data_path("fish_common_history");
+
+        let output = histutils(&["--output-format", "fish", &input_data_file]);
+        let actual_output_str =
+            String::from_utf8(output.stdout).expect("failed to convert to string");
+        let expected_output_str =
+            std::fs::read_to_string(&output_data_file).expect("failed to read file");
+
+        assert!(output.status.success());
+        assert_eq!(actual_output_str, expected_output_str);
+    }
+
+    #[test]
+    fn roundtrip_fish_common_history() {
+        let data_file = test_data_path("fish_common_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
+
+        let output = histutils(&["--output-format", "fish", &data_file]);
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        assert!(output.status.success());
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn roundtrip_fish_paths_history() {
+        let data_file = test_data_path("fish_paths_history");
+        let input_str = std::fs::read_to_string(&data_file).expect("failed to read file");
+
+        let output = histutils(&["--output-format", "fish", &data_file]);
+        let output_str = String::from_utf8(output.stdout).expect("failed to convert to string");
+
+        assert!(output.status.success());
+        assert_eq!(output_str, input_str);
+    }
+
+    #[test]
+    fn detect_output_format_fish() {
+        let temp_file = TempFile::with_content("- cmd: echo hello\n  when: 123\n");
+
+        let output = histutils(&[temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "- cmd: echo hello\n  when: 123\n");
+    }
+
+    #[test]
+    fn detect_output_format_fish_multiple() {
+        let temp_file1 = TempFile::with_content("- cmd: echo foo\n  when: 1\n");
+        let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 2\n");
+        let temp_file3 = TempFile::with_content("- cmd: echo baz\n  when: 3\n");
+
+        let output = histutils(&[
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+            temp_file3.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            "- cmd: echo foo\n  when: 1\n- cmd: echo bar\n  when: 2\n- cmd: echo baz\n  when: 3\n",
+        );
+    }
 
     #[test]
     fn bad_when() {
@@ -612,100 +681,49 @@ mod fish {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains(format!("{temp_path}:3: skipping blank command").as_str()));
     }
+
+    #[test]
+    fn merges_entries_with_paths() {
+        // Test that when merging duplicate entries, paths are merged uniquely
+        let temp_file1 =
+            TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /tmp\n");
+        let temp_file2 =
+            TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /home\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "fish",
+            temp_file1.path_str(),
+            temp_file2.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        // Should deduplicate and merge paths
+        assert!(stdout.contains("cargo build"));
+        assert!(stdout.contains("paths:"));
+        assert!(stdout.contains("- /tmp"));
+        assert!(stdout.contains("- /home"));
+        // Should only have one entry
+        assert_eq!(stdout.matches("cargo build").count(), 1);
+    }
 }
 
-#[test]
-fn skips_blank_commands_sh() {
-    let output = histutils_with_stdin(&["--count"], b"echo hello\n   \nworld\n");
+mod mixed {
+    use super::*;
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "2");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(":2: skipping blank command"));
-}
+    #[test]
+    fn output_format_mixed_error() {
+        let temp_file1 = TempFile::with_content(": 1234567891:0;echo foo\n");
+        let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 1234567892\n");
 
-#[test]
-fn skips_blank_commands_zsh() {
-    let output = histutils_with_stdin(&["--count"], b": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
+        let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "2");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(":2: skipping blank command"));
-}
-
-#[test]
-fn preserves_commands_with_tabs() {
-    let output = histutils_with_stdin(&["--count"], b"echo hello\n\t\t\nworld\n");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "2");
-    // Tabs-only line should be skipped as blank
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(":2: skipping blank command"));
-}
-
-#[test]
-fn merges_entries_with_duration_preference() {
-    // Test that when merging duplicate entries, non-zero duration is preferred
-    // regardless of which file it comes from
-
-    let temp_file1 = TempFile::with_content(": 1000:5;echo hello\n: 2000:0;echo world\n");
-    let temp_file2 = TempFile::with_content(": 1000:0;echo hello\n: 2000:3;echo world\n");
-
-    let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-
-    // Should deduplicate and keep the entry with non-zero duration from first file
-    // and from second file, with entries sorted by timestamp
-    let expected_output = ": 1000:5;echo hello\n: 2000:3;echo world\n";
-    assert_eq!(stdout, expected_output);
-}
-
-#[test]
-fn merges_entries_with_paths() {
-    // Test that when merging duplicate entries, paths are merged uniquely
-    let temp_file1 =
-        TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /tmp\n");
-    let temp_file2 =
-        TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /home\n");
-
-    let output = histutils(&[
-        "--output-format",
-        "fish",
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-    ]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    // Should deduplicate and merge paths
-    assert!(stdout.contains("cargo build"));
-    assert!(stdout.contains("paths:"));
-    assert!(stdout.contains("- /tmp"));
-    assert!(stdout.contains("- /home"));
-    // Should only have one entry
-    assert_eq!(stdout.matches("cargo build").count(), 1);
-}
-
-#[test]
-fn preserves_timestampless_entries() {
-    let temp_file1 = TempFile::with_content("echo hello\n");
-    let temp_file2 = TempFile::with_content("echo hello\n");
-
-    let output = histutils(&[
-        "--output-format",
-        "sh",
-        temp_file1.path_str(),
-        temp_file2.path_str(),
-    ]);
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-    assert_eq!(stdout, "echo hello\necho hello\n");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            "usage: --output-format= required when multiple input formats are given\n",
+        );
+    }
 }
