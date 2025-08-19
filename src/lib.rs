@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::io::{BufRead, Cursor, Result as IoResult, Write};
+use std::io::{self, BufRead, Cursor, Result as IoResult, Write};
 
 use std::path::PathBuf;
 use std::str;
@@ -234,7 +234,7 @@ impl std::fmt::Display for ParseError {
         match self {
             ParseError::BadFishHeader => write!(f, "bad fish header"),
             ParseError::BadZshExtendedHeader => write!(f, "bad zsh extended header"),
-            ParseError::BlankCommand => write!(f, "blank command"),
+            ParseError::BlankCommand => write!(f, "skipping blank command"),
             ParseError::ParseIntError => write!(f, "parse int error"),
             ParseError::Utf8Error => write!(f, "utf8 error"),
         }
@@ -339,6 +339,19 @@ where
     }
 }
 
+fn print_entry<E: std::fmt::Display>(ctx: &Context, line_no: usize, msg: E, entry: &[u8]) {
+    if let Some(path) = &ctx.filename {
+        eprintln!("{}:{line_no}: {msg}", path.display());
+    } else {
+        eprintln!(":{line_no}: {msg}");
+    }
+    let mut stderr = io::stderr();
+    let _ = stderr.write_all(entry);
+    if !entry.ends_with(b"\n") {
+        let _ = stderr.write_all(b"\n");
+    }
+}
+
 fn parse_sh_entries<'a, R>(
     reader: &'a mut R,
     ctx: &'a Context,
@@ -355,23 +368,12 @@ where
         let command = if let Ok(s) = str::from_utf8(&line) {
             s.to_string()
         } else {
-            if let Some(path) = &ctx.filename {
-                eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-            } else {
-                eprintln!(":{line_no}: invalid UTF-8");
-            }
-            let lossy = String::from_utf8_lossy(&line);
-            eprintln!("{lossy}");
-            lossy.to_string()
+            print_entry(ctx, line_no, "invalid UTF-8", &line);
+            String::from_utf8_lossy(&line).to_string()
         };
 
-        // Skip blank commands with a warning
         if is_blank_command(&command) {
-            if let Some(path) = &ctx.filename {
-                eprintln!("{}:{line_no}: skipping blank command", path.display());
-            } else {
-                eprintln!(":{line_no}: skipping blank command");
-            }
+            print_entry(ctx, line_no, "skipping blank command", &line);
             return None;
         }
 
@@ -395,12 +397,7 @@ where
         Ok((line, line_no)) => match parse_zsh_raw_entry(&line, ctx, line_no) {
             Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                if let Some(path) = &ctx.filename {
-                    eprintln!("{}:{line_no}: {err}", path.display());
-                } else {
-                    eprintln!(":{line_no}: {err}");
-                }
-                eprintln!("{}", String::from_utf8_lossy(&line));
+                print_entry(ctx, line_no, err, &line);
                 None
             }
         },
@@ -450,23 +447,11 @@ fn parse_zsh_raw_entry(
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         s.to_string()
     } else {
-        if let Some(path) = &ctx.filename {
-            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-        } else {
-            eprintln!(":{line_no}: invalid UTF-8");
-        }
-        let lossy = String::from_utf8_lossy(cmd_bytes);
-        eprintln!("{lossy}");
-        lossy.to_string()
+        print_entry(ctx, line_no, "invalid UTF-8", line);
+        String::from_utf8_lossy(cmd_bytes).to_string()
     };
 
-    // Skip blank commands with a warning
     if is_blank_command(&command) {
-        if let Some(path) = &ctx.filename {
-            eprintln!("{}:{line_no}: skipping blank command", path.display());
-        } else {
-            eprintln!(":{line_no}: skipping blank command");
-        }
         return Err(ParseError::BlankCommand);
     }
 
@@ -564,12 +549,7 @@ where
         Ok((entry_data, line_no)) => match parse_fish_raw_entry(&entry_data, ctx, line_no) {
             Ok(entry) => Some(Ok(entry)),
             Err(err) => {
-                if let Some(path) = &ctx.filename {
-                    eprintln!("{}:{line_no}: {err}", path.display());
-                } else {
-                    eprintln!(":{line_no}: {err}");
-                }
-                eprintln!("{}", String::from_utf8_lossy(&entry_data));
+                print_entry(ctx, line_no, err, &entry_data);
                 None
             }
         },
@@ -595,23 +575,12 @@ fn parse_fish_raw_entry(
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         unescape_fish(s)
     } else {
-        if let Some(path) = &ctx.filename {
-            eprintln!("{}:{line_no}: invalid UTF-8", path.display());
-        } else {
-            eprintln!(":{line_no}: invalid UTF-8");
-        }
+        print_entry(ctx, line_no, "invalid UTF-8", data);
         let lossy = String::from_utf8_lossy(cmd_bytes);
-        eprintln!("{lossy}");
         unescape_fish(&lossy)
     };
 
-    // Skip blank commands with a warning
     if is_blank_command(&command) {
-        if let Some(path) = &ctx.filename {
-            eprintln!("{}:{line_no}: skipping blank command", path.display());
-        } else {
-            eprintln!(":{line_no}: skipping blank command");
-        }
         return Err(ParseError::BlankCommand);
     }
 
