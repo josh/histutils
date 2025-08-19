@@ -362,6 +362,29 @@ fn count_empty_file() {
     assert_eq!(stdout.trim(), "0");
 }
 
+#[test]
+fn flag_after_input_path() {
+    let temp_file = TempFile::with_content(": 1:0;echo hello\n");
+
+    let output = histutils(&[temp_file.path_str(), "--output-format", "sh"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo hello\n");
+}
+
+#[test]
+fn flag_between_input_paths() {
+    let temp_file1 = TempFile::with_content(": 1:0;echo one\n");
+    let temp_file2 = TempFile::with_content(": 2:0;echo two\n");
+
+    let output = histutils(&[temp_file1.path_str(), "--count", temp_file2.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2");
+}
+
 mod sh {
     use super::*;
 
