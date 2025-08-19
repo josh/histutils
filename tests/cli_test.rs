@@ -1009,8 +1009,8 @@ mod fish {
     }
 
     #[test]
-    fn merges_entries_with_paths() {
-        // Test that when merging duplicate entries, paths are merged uniquely
+    fn merges_entries_prefers_first_paths() {
+        // When merging duplicate entries, if both have paths, keep the first entry's paths.
         let temp_file1 =
             TempFile::with_content("- cmd: cargo build\n  when: 1000\n  paths:\n    - /tmp\n");
         let temp_file2 =
@@ -1025,11 +1025,11 @@ mod fish {
 
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-        // Should deduplicate and merge paths
+        // Should keep paths from the first file only
         assert!(stdout.contains("cargo build"));
         assert!(stdout.contains("paths:"));
         assert!(stdout.contains("- /tmp"));
-        assert!(stdout.contains("- /home"));
+        assert!(!stdout.contains("- /home"));
         // Should only have one entry
         assert_eq!(stdout.matches("cargo build").count(), 1);
     }

@@ -191,18 +191,33 @@ fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
         _ => {}
     }
 
-    // Merge paths uniquely
-    match (&mut a.paths, b.paths) {
-        (None, Some(b_paths)) => a.paths = Some(b_paths),
+    // Prefer non-empty paths from either side; if both have paths, keep `a`'s.
+    a.paths = match (a.paths.take(), b.paths) {
         (Some(a_paths), Some(b_paths)) => {
-            for p in b_paths {
-                if !a_paths.contains(&p) {
-                    a_paths.push(p);
-                }
+            if a_paths.is_empty() && !b_paths.is_empty() {
+                Some(b_paths)
+            } else if a_paths.is_empty() && b_paths.is_empty() {
+                None
+            } else {
+                Some(a_paths)
             }
         }
-        _ => {}
-    }
+        (Some(a_paths), None) => {
+            if a_paths.is_empty() {
+                None
+            } else {
+                Some(a_paths)
+            }
+        }
+        (None, Some(b_paths)) => {
+            if b_paths.is_empty() {
+                None
+            } else {
+                Some(b_paths)
+            }
+        }
+        (None, None) => None,
+    };
 
     a
 }
