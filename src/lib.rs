@@ -4,6 +4,8 @@ use std::io::{self, BufRead, Cursor, Result as IoResult, Write};
 use std::path::PathBuf;
 use std::str;
 
+const DISTANT_FUTURE: u64 = 4_102_444_800;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HistoryEntry {
     pub timestamp: Option<u64>,
@@ -226,6 +228,7 @@ enum ParseError {
     BadFishHeader,
     BadZshExtendedHeader,
     BlankCommand,
+    FutureTimestamp,
     ParseIntError,
     Utf8Error,
 }
@@ -248,6 +251,7 @@ impl std::fmt::Display for ParseError {
             ParseError::BadFishHeader => write!(f, "bad fish header"),
             ParseError::BadZshExtendedHeader => write!(f, "bad zsh extended header"),
             ParseError::BlankCommand => write!(f, "skipping blank command"),
+            ParseError::FutureTimestamp => write!(f, "skipping distant future timestamp"),
             ParseError::ParseIntError => write!(f, "parse int error"),
             ParseError::Utf8Error => write!(f, "utf8 error"),
         }
@@ -454,7 +458,11 @@ fn parse_zsh_raw_entry(
 
     let ts_str = str::from_utf8(ts_bytes)?;
     let dur_str = str::from_utf8(dur_bytes)?;
-    let timestamp = Some(ts_str.parse()?);
+    let ts_val: u64 = ts_str.parse()?;
+    if ts_val > DISTANT_FUTURE {
+        return Err(ParseError::FutureTimestamp);
+    }
+    let timestamp = Some(ts_val);
     let duration = Some(dur_str.parse()?);
 
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
@@ -606,6 +614,9 @@ fn parse_fish_raw_entry(
     if let Some(rest) = line.strip_prefix(b"when:") {
         let ts_bytes = rest.strip_prefix(b" ").unwrap_or(rest);
         let ts = str::from_utf8(ts_bytes)?.parse()?;
+        if ts > DISTANT_FUTURE {
+            return Err(ParseError::FutureTimestamp);
+        }
         timestamp = ts;
     } else {
         return Err(ParseError::BadFishHeader);

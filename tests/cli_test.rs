@@ -803,6 +803,22 @@ mod zsh {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(stderr, ":2: skipping blank command\n: 2:0;\t\t\n");
     }
+
+    #[test]
+    fn skips_future_timestamps() {
+        let ts = 4_102_444_801_u64;
+        let input = format!(": {ts}:0;echo hi\n");
+        let output = histutils_with_stdin(&["--count"], input.as_bytes());
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "0");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!(":1: skipping distant future timestamp\n: {ts}:0;echo hi\n"),
+        );
+    }
 }
 
 mod fish {
@@ -1019,6 +1035,22 @@ mod fish {
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
         assert_eq!(stdout, "echo \\q\nfoo\\\n");
+    }
+
+    #[test]
+    fn skips_future_timestamps() {
+        let ts = 4_102_444_801_u64;
+        let input = format!("- cmd: echo\n  when: {ts}\n");
+        let output = histutils_with_stdin(&["--count"], input.as_bytes());
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "0");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!(":1: skipping distant future timestamp\n- cmd: echo\n  when: {ts}\n"),
+        );
     }
 
     #[test]
