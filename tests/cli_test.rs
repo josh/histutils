@@ -530,6 +530,23 @@ mod sh {
             format!("{temp_path}:2: skipping blank command\n   \n")
         );
     }
+
+    #[test]
+    fn sh_null_byte_warning() {
+        let temp_file = TempFile::with_bytes(b"echo\x00test\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--output-format", "sh", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "echo�test\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:1: invalid null byte\necho\0test\n")
+        );
+    }
 }
 
 mod zsh {
@@ -571,6 +588,22 @@ mod zsh {
         assert_eq!(
             stderr,
             format!("{temp_path}:1: invalid UTF-8\n: 123:0;echo \u{FFFD}\n")
+        );
+    }
+
+    #[test]
+    fn zsh_bad_history_strip_null_byte() {
+        let temp_file = TempFile::with_bytes(b": 1000000000:0;\0echo ok\n");
+        let temp_path = temp_file.path_str();
+        let output = histutils(&["--output-format", "zsh-extended", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 1000000000:0;�echo ok\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:1: invalid null byte\n: 1000000000:0;\0echo ok\n")
         );
     }
 
@@ -1111,6 +1144,23 @@ mod fish {
         assert_eq!(
             stderr,
             "warning: setting timestamp on entries without one; duplicates may be merged\n"
+        );
+    }
+
+    #[test]
+    fn fish_null_byte_warning() {
+        let temp_file = TempFile::with_bytes(b"- cmd: echo\x00test\n  when: 1000000000\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--output-format", "fish", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "- cmd: echo�test\n  when: 1000000000\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{temp_path}:1: invalid null byte\n- cmd: echo\0test\n  when: 1000000000\n")
         );
     }
 }
