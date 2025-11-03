@@ -383,10 +383,21 @@ where
         };
 
         let command = if let Ok(s) = str::from_utf8(&line) {
-            s.to_string()
+            if s.contains('\0') {
+                print_entry(ctx, line_no, "invalid null byte", &line);
+                s.replace('\0', "�")
+            } else {
+                s.to_string()
+            }
         } else {
             print_entry(ctx, line_no, "invalid UTF-8", &line);
-            String::from_utf8_lossy(&line).to_string()
+            let lossy = String::from_utf8_lossy(&line);
+            if lossy.contains('\0') {
+                print_entry(ctx, line_no, "invalid null byte", &line);
+                lossy.replace('\0', "�")
+            } else {
+                lossy.to_string()
+            }
         };
 
         if is_blank_command(&command) {
@@ -394,6 +405,10 @@ where
             return None;
         }
 
+        debug_assert!(
+            !command.contains('\0'),
+            "HistoryEntry command must not contain null bytes"
+        );
         Some(Ok(HistoryEntry {
             timestamp: None,
             duration: None,
@@ -466,10 +481,21 @@ fn parse_zsh_raw_entry(
     let duration = Some(dur_str.parse()?);
 
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
-        s.to_string()
+        if s.contains('\0') {
+            print_entry(ctx, line_no, "invalid null byte", line);
+            s.replace('\0', "�")
+        } else {
+            s.to_string()
+        }
     } else {
         print_entry(ctx, line_no, "invalid UTF-8", line);
-        String::from_utf8_lossy(cmd_bytes).to_string()
+        let lossy = String::from_utf8_lossy(cmd_bytes);
+        if lossy.contains('\0') {
+            print_entry(ctx, line_no, "invalid null byte", line);
+            lossy.replace('\0', "�")
+        } else {
+            lossy.to_string()
+        }
     };
 
     if is_blank_command(&command) {
@@ -479,6 +505,10 @@ fn parse_zsh_raw_entry(
     assert!(timestamp.is_some(), "timestamp is required");
     assert!(duration.is_some(), "duration is required");
 
+    debug_assert!(
+        !command.contains('\0'),
+        "HistoryEntry command must not contain null bytes"
+    );
     Ok(HistoryEntry {
         timestamp,
         duration,
@@ -594,11 +624,23 @@ fn parse_fish_raw_entry(
     };
     let cmd_bytes = cmd_bytes.strip_prefix(b" ").unwrap_or(cmd_bytes);
     let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
-        unescape_fish(s)
+        let unescaped = unescape_fish(s);
+        if unescaped.contains('\0') {
+            print_entry(ctx, line_no, "invalid null byte", data);
+            unescaped.replace('\0', "�")
+        } else {
+            unescaped
+        }
     } else {
         print_entry(ctx, line_no, "invalid UTF-8", data);
         let lossy = String::from_utf8_lossy(cmd_bytes);
-        unescape_fish(&lossy)
+        let unescaped = unescape_fish(&lossy);
+        if unescaped.contains('\0') {
+            print_entry(ctx, line_no, "invalid null byte", data);
+            unescaped.replace('\0', "�")
+        } else {
+            unescaped
+        }
     };
 
     if is_blank_command(&command) {
@@ -645,6 +687,10 @@ fn parse_fish_raw_entry(
         }
     }
 
+    debug_assert!(
+        !command.contains('\0'),
+        "HistoryEntry command must not contain null bytes"
+    );
     Ok(HistoryEntry {
         timestamp: Some(timestamp),
         duration: None,
