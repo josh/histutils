@@ -604,6 +604,24 @@ mod sh {
             format!("{temp_path}:1: invalid null byte\necho\0test\n")
         );
     }
+
+    #[test]
+    fn truncates_long_command() {
+        let long_command: String = "1".repeat(2000);
+        let temp_file = TempFile::with_content(&format!("{long_command}\n"));
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--output-format", "sh", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        let expected_output = "1".repeat(1024) + "\n";
+        assert_eq!(stdout, expected_output);
+        assert_eq!(stdout.len(), 1025);
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("command truncated from 2000 bytes to 1024 bytes"));
+    }
 }
 
 mod zsh {

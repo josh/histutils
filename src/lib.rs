@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::str;
 
 const DISTANT_FUTURE: u64 = 4_102_444_800;
+const MAX_COMMAND_LENGTH: usize = 1024; // 1KB limit
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HistoryEntry {
@@ -369,6 +370,30 @@ fn print_entry<E: std::fmt::Display>(ctx: &Context, line_no: usize, msg: E, entr
     }
 }
 
+fn truncate_command(command: &mut String, ctx: &Context, line_no: usize, raw_entry: &[u8]) {
+    if command.len() > MAX_COMMAND_LENGTH {
+        print_entry(
+            ctx,
+            line_no,
+            format!(
+                "command truncated from {} bytes to {} bytes",
+                command.len(),
+                MAX_COMMAND_LENGTH
+            ),
+            raw_entry,
+        );
+        let mut truncated = String::with_capacity(MAX_COMMAND_LENGTH);
+        for ch in command.chars() {
+            let ch_len = ch.len_utf8();
+            if truncated.len() + ch_len > MAX_COMMAND_LENGTH {
+                break;
+            }
+            truncated.push(ch);
+        }
+        *command = truncated;
+    }
+}
+
 fn parse_sh_entries<'a, R>(
     reader: &'a mut R,
     ctx: &'a Context,
@@ -382,7 +407,7 @@ where
             Err(e) => return Some(Err(e)),
         };
 
-        let command = if let Ok(s) = str::from_utf8(&line) {
+        let mut command = if let Ok(s) = str::from_utf8(&line) {
             if s.contains('\0') {
                 print_entry(ctx, line_no, "invalid null byte", &line);
                 s.replace('\0', "�")
@@ -399,6 +424,8 @@ where
                 lossy.to_string()
             }
         };
+
+        truncate_command(&mut command, ctx, line_no, &line);
 
         if is_blank_command(&command) {
             print_entry(ctx, line_no, "skipping blank command", &line);
@@ -480,7 +507,7 @@ fn parse_zsh_raw_entry(
     let timestamp = Some(ts_val);
     let duration = Some(dur_str.parse()?);
 
-    let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
+    let mut command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         if s.contains('\0') {
             print_entry(ctx, line_no, "invalid null byte", line);
             s.replace('\0', "�")
@@ -497,6 +524,8 @@ fn parse_zsh_raw_entry(
             lossy.to_string()
         }
     };
+
+    truncate_command(&mut command, ctx, line_no, line);
 
     if is_blank_command(&command) {
         return Err(ParseError::BlankCommand);
@@ -623,7 +652,7 @@ fn parse_fish_raw_entry(
         return Err(ParseError::BadFishHeader);
     };
     let cmd_bytes = cmd_bytes.strip_prefix(b" ").unwrap_or(cmd_bytes);
-    let command = if let Ok(s) = str::from_utf8(cmd_bytes) {
+    let mut command = if let Ok(s) = str::from_utf8(cmd_bytes) {
         let unescaped = unescape_fish(s);
         if unescaped.contains('\0') {
             print_entry(ctx, line_no, "invalid null byte", data);
@@ -642,6 +671,8 @@ fn parse_fish_raw_entry(
             unescaped
         }
     };
+
+    truncate_command(&mut command, ctx, line_no, data);
 
     if is_blank_command(&command) {
         return Err(ParseError::BlankCommand);
