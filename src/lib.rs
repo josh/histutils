@@ -36,6 +36,7 @@ impl ShellFormat {
 #[derive(Debug, Default, Clone)]
 pub struct Context {
     pub filename: Option<PathBuf>,
+    pub fix: bool,
 }
 
 #[derive(Debug)]
@@ -153,6 +154,12 @@ where
                 for entry_result in parse_sh_entries(&mut reader, &ctx) {
                     file_entries.push(entry_result?);
                 }
+            }
+        }
+
+        if ctx.fix {
+            for entry in &mut file_entries {
+                fix_command(entry, &ctx);
             }
         }
 
@@ -368,6 +375,54 @@ fn print_entry<E: std::fmt::Display>(ctx: &Context, line_no: usize, msg: E, entr
     if !entry.ends_with(b"\n") {
         let _ = stderr.write_all(b"\n");
     }
+}
+
+fn fix_command(entry: &mut HistoryEntry, ctx: &Context) {
+    if let Some(fixed_entry) = extract_corrupted_entity(entry) {
+        eprintln!(
+            "{}: fixing corrupted header in command",
+            if let Some(path) = &ctx.filename {
+                format!("{}", path.display())
+            } else {
+                "stdin".to_string()
+            }
+        );
+        *entry = fixed_entry;
+    }
+}
+
+fn extract_corrupted_entity(entry: &HistoryEntry) -> Option<HistoryEntry> {
+    let rest = entry.command.strip_prefix(": ")?;
+    let idx_colon = rest.find(':')?;
+    let ts_part = &rest[..idx_colon];
+    if ts_part.is_empty() || !ts_part.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let rest2 = &rest[idx_colon + 1..];
+    let idx_sc = rest2.find(';')?;
+    let dur_part = &rest2[..idx_sc];
+    if dur_part.is_empty() || !dur_part.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let new_command = rest2[idx_sc + 1..].to_string();
+
+    let embedded_ts: u64 = ts_part.parse().ok()?;
+    let embedded_dur: u64 = dur_part.parse().ok()?;
+
+    if embedded_ts > DISTANT_FUTURE {
+        return None;
+    }
+
+    let mut fixed_entry = entry.clone();
+    fixed_entry.command = new_command;
+
+    let is_zsh_entry = entry.duration.is_some();
+    if is_zsh_entry {
+        fixed_entry.timestamp = Some(embedded_ts);
+        fixed_entry.duration = Some(embedded_dur);
+    }
+
+    Some(fixed_entry)
 }
 
 fn truncate_command(command: &mut String, ctx: &Context, line_no: usize, raw_entry: &[u8]) {

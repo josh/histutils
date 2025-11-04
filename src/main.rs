@@ -14,15 +14,17 @@ fn main() -> io::Result<()> {
         }
     };
 
-    if config.print_help {
-        println!(
-            "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--version] [FILE...]"
-        );
-        return Ok(());
-    }
-
-    if config.print_version {
-        println!("histutils {}", env!("CARGO_PKG_VERSION"));
+    if let Some(action) = config.action {
+        match action {
+            ConfigAction::PrintHelp => {
+                println!(
+                    "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--version] [FILE...]"
+                );
+            }
+            ConfigAction::PrintVersion => {
+                println!("histutils {}", env!("CARGO_PKG_VERSION"));
+            }
+        }
         return Ok(());
     }
 
@@ -45,7 +47,10 @@ fn main() -> io::Result<()> {
         })
         .collect::<io::Result<Vec<_>>>()?;
 
-    let ctx = Context::default();
+    let ctx = Context {
+        fix: config.fix,
+        ..Context::default()
+    };
     let mut history = parse_entries_with_ctx(history_files, &ctx)?;
 
     if let Some(limit) = config.head {
@@ -120,8 +125,14 @@ struct Config {
     head: Option<usize>,
     tail: Option<usize>,
     count: bool,
-    print_help: bool,
-    print_version: bool,
+    fix: bool,
+    action: Option<ConfigAction>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ConfigAction {
+    PrintHelp,
+    PrintVersion,
 }
 
 fn parse_args(args: &[String]) -> Result<Config, ArgError> {
@@ -131,10 +142,20 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                config.print_help = true;
+                if config.action.is_some() {
+                    return Err(ArgError(
+                        "usage: --help and --version are mutually exclusive".to_string(),
+                    ));
+                }
+                config.action = Some(ConfigAction::PrintHelp);
             }
             "--version" | "-V" => {
-                config.print_version = true;
+                if config.action.is_some() {
+                    return Err(ArgError(
+                        "usage: --help and --version are mutually exclusive".to_string(),
+                    ));
+                }
+                config.action = Some(ConfigAction::PrintVersion);
             }
             "--count" | "-c" => {
                 if config.count {
@@ -143,6 +164,14 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     ));
                 }
                 config.count = true;
+            }
+            "--fix" => {
+                if config.fix {
+                    return Err(ArgError(
+                        "usage: --fix specified multiple times".to_string(),
+                    ));
+                }
+                config.fix = true;
             }
             "--head" | "--tail" => {
                 let Some(value) = args.next() else {
