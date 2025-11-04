@@ -16,7 +16,7 @@ fn main() -> io::Result<()> {
 
     if config.print_help {
         println!(
-            "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--version] [FILE...]"
+            "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--version] [FILE...]"
         );
         return Ok(());
     }
@@ -47,6 +47,17 @@ fn main() -> io::Result<()> {
 
     let ctx = Context::default();
     let mut history = parse_entries_with_ctx(history_files, &ctx)?;
+
+    if let Some(limit) = config.head {
+        if history.entries.len() > limit {
+            history.entries.truncate(limit);
+        }
+    } else if let Some(limit) = config.tail {
+        let len = history.entries.len();
+        if limit < len {
+            history.entries.drain(0..len - limit);
+        }
+    }
 
     if config.count {
         println!("{}", history.entries.len());
@@ -106,6 +117,8 @@ struct Config {
     output_format: Option<ShellFormat>,
     outputs: Vec<String>,
     paths: Vec<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
     count: bool,
     print_help: bool,
     print_version: bool,
@@ -130,6 +143,12 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     ));
                 }
                 config.count = true;
+            }
+            "--head" | "--tail" => {
+                let Some(value) = args.next() else {
+                    return Err(ArgError(format!("{arg} requires a value")));
+                };
+                set_limit(&mut config, arg, value.as_str())?;
             }
             "--output" | "-o" => {
                 if let Some(path) = args.next() {
@@ -167,6 +186,10 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                     return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
                 };
             }
+            _ if arg.starts_with("--head=") || arg.starts_with("--tail=") => {
+                let (flag, value) = arg.split_once('=').expect("split on '='");
+                set_limit(&mut config, flag, value)?;
+            }
             _ => {
                 config.paths.push(arg.clone());
             }
@@ -191,6 +214,46 @@ fn parse_format_opt(s: &str) -> Option<ShellFormat> {
         "fish" => Some(ShellFormat::Fish),
         _ => None,
     }
+}
+
+fn set_limit(config: &mut Config, flag: &str, value: &str) -> Result<(), ArgError> {
+    match flag {
+        "--head" => {
+            if config.head.is_some() {
+                return Err(ArgError(
+                    "usage: --head specified multiple times".to_string(),
+                ));
+            }
+            if config.tail.is_some() {
+                return Err(ArgError(
+                    "usage: --head cannot be used with --tail".to_string(),
+                ));
+            }
+            config.head = Some(parse_limit(value, flag)?);
+        }
+        "--tail" => {
+            if config.tail.is_some() {
+                return Err(ArgError(
+                    "usage: --tail specified multiple times".to_string(),
+                ));
+            }
+            if config.head.is_some() {
+                return Err(ArgError(
+                    "usage: --tail cannot be used with --head".to_string(),
+                ));
+            }
+            config.tail = Some(parse_limit(value, flag)?);
+        }
+        _ => unreachable!("unexpected flag"),
+    }
+
+    Ok(())
+}
+
+fn parse_limit(value: &str, flag: &str) -> Result<usize, ArgError> {
+    value
+        .parse::<usize>()
+        .map_err(|_| ArgError(format!("usage: invalid {flag} value '{value}'")))
 }
 
 enum InputReader {

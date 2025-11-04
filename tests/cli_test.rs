@@ -118,7 +118,7 @@ fn prints_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--count] [--version] [FILE...]\n";
+    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--version] [FILE...]\n";
     assert_eq!(stdout, expected_output);
 }
 
@@ -196,6 +196,63 @@ fn missing_output_format_value() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr, "--output-format requires a value\n");
+}
+
+#[test]
+fn head_limits_output() {
+    let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
+    let output = histutils(&["--output-format=sh", "--head", "2", temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo one\necho two\n");
+}
+
+#[test]
+fn tail_limits_output() {
+    let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
+    let output = histutils(&["--output-format=sh", "--tail", "2", temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "echo two\necho three\n");
+}
+
+#[test]
+fn head_with_count_limits_entries() {
+    let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
+    let output = histutils(&["--count", "--head", "2", temp_file.path_str()]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+    assert_eq!(stdout, "2\n");
+}
+
+#[test]
+fn head_and_tail_conflict() {
+    let output = histutils(&["--head", "2", "--tail", "2", "-"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: --tail cannot be used with --head\n");
+}
+
+#[test]
+fn invalid_head_value() {
+    let output = histutils(&["--head", "abc", "-"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: invalid --head value 'abc'\n");
+}
+
+#[test]
+fn invalid_tail_value() {
+    let output = histutils(&["--tail", "abc", "-"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: invalid --tail value 'abc'\n");
 }
 
 #[test]
