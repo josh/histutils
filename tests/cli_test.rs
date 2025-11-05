@@ -118,7 +118,7 @@ fn prints_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--version] [FILE...]\n";
+    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--version] [FILE...]\n";
     assert_eq!(stdout, expected_output);
 }
 
@@ -901,6 +901,21 @@ mod zsh {
     }
 
     #[test]
+    fn fix_repairs_duplicated_header() {
+        let temp_file = TempFile::with_content(": 1762201763:0;: 1747718589:5;lazyjj\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--fix", "--output-format", "zsh-extended", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 1747718589:5;lazyjj\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("fixing corrupted header in command"));
+        assert!(stderr.contains(temp_path));
+    }
+
+    #[test]
     fn skips_blank_commands() {
         let output =
             histutils_with_stdin(&["--count"], b": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
@@ -1159,6 +1174,22 @@ mod fish {
             stderr,
             format!(":1: skipping distant future timestamp\n- cmd: echo\n  when: {ts}\n"),
         );
+    }
+
+    #[test]
+    fn fix_repairs_embedded_zsh_header() {
+        let temp_file =
+            TempFile::with_content("- cmd: : 1747802716:0;restic version\n  when: 1762201763\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--fix", "--output-format", "fish", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, "- cmd: restic version\n  when: 1762201763\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("fixing corrupted header in command"));
+        assert!(stderr.contains(temp_path));
     }
 
     #[test]
