@@ -190,14 +190,10 @@ fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
 
     // Prefer non-zero durations, or fall back to any Some duration
     match (a.duration, b.duration) {
-        (Some(a_dur), Some(b_dur)) => {
-            if a_dur == 0 && b_dur > 0 {
-                a.duration = Some(b_dur);
-            }
-            // Keep a.duration if both are non-zero or if b is zero
-        }
+        // Prefer b's duration if a's is zero, or if a has no duration at all
+        (Some(0), Some(b_dur)) if b_dur > 0 => a.duration = Some(b_dur),
         (None, Some(_)) => a.duration = b.duration,
-        // Keep a.duration if b is None
+        // Otherwise keep a.duration
         _ => {}
     }
 
@@ -930,5 +926,5 @@ where
         }
     }
 
-    map.into_iter().flat_map(|(_, v)| v)
+    map.into_values().flatten()
 }
