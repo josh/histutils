@@ -265,6 +265,25 @@ fn count_stdin() {
 }
 
 #[test]
+fn normalizes_crlf_history_inputs() {
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"echo sh\r\n", b"echo sh\n"),
+        (b"echo one\\\r\necho two\r\n", b"echo one\\\necho two\n"),
+        (b": 10:0;echo zsh\r\n", b": 10:0;echo zsh\n"),
+        (
+            b"- cmd: echo fish\r\n  when: 10\r\n  paths:\r\n    - /tmp\r\n",
+            b"- cmd: echo fish\n  when: 10\n  paths:\n    - /tmp\n",
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let output = histutils_with_stdin(&[], input);
+        assert!(output.status.success());
+        assert_eq!(&output.stdout, expected);
+    }
+}
+
+#[test]
 fn writes_to_output_file() {
     let input_str = ": 123:0;echo hello\n";
     let input_file = TempFile::with_content(input_str);
