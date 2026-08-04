@@ -893,7 +893,7 @@ where
             assert!(!paths.is_empty(), "paths was some but empty");
             writeln!(writer, "  paths:")?;
             for p in paths {
-                writeln!(writer, "    - {}", &p)?;
+                writeln!(writer, "    - {p}")?;
             }
         }
     }
