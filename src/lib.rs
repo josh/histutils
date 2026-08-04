@@ -295,7 +295,12 @@ where
         self.line_no += 1;
         match self.reader.read_until(b'\n', &mut self.buf) {
             Ok(0) => None,
-            Ok(_) => Some(Ok((self.buf.clone(), self.line_no))),
+            Ok(_) => {
+                if self.buf.ends_with(b"\r\n") {
+                    self.buf.remove(self.buf.len() - 2);
+                }
+                Some(Ok((self.buf.clone(), self.line_no)))
+            }
             Err(e) => Some(Err(e)),
         }
     }
