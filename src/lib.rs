@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::io::{self, BufRead, Cursor, Result as IoResult, Write};
+use std::io::{self, BufRead, Cursor, Read, Result as IoResult, Write};
 
 use std::path::PathBuf;
 use std::str;
@@ -51,6 +51,9 @@ impl HistoryEntries {
     /// This is useful for determining if all input files used the same shell format.
     #[must_use]
     pub fn primary_format(&self) -> Option<ShellFormat> {
+        if self.original_formats.is_empty() {
+            return Some(ShellFormat::Sh);
+        }
         if self.original_formats.len() == 1 {
             self.original_formats.iter().copied().next()
         } else {
@@ -92,17 +95,41 @@ impl<'a, const N: usize> From<&'a [u8; N]> for HistoryFile<Cursor<&'a [u8]>> {
     }
 }
 
-fn detect_format<R>(reader: &mut R) -> ShellFormat
+fn detect_format<R>(reader: &mut R) -> IoResult<(Option<ShellFormat>, Vec<u8>)>
 where
     R: BufRead,
 {
-    let buf = reader.fill_buf().unwrap_or(&[]);
-    if buf.starts_with(b"- cmd:") {
-        ShellFormat::Fish
-    } else if buf.starts_with(b":") {
-        ShellFormat::ZshExtended
-    } else {
-        ShellFormat::Sh
+    let mut prefix = Vec::new();
+    let mut saw_comment = false;
+    loop {
+        let line_start = prefix.len();
+        if reader.read_until(b'\n', &mut prefix)? == 0 {
+            let format = saw_comment.then_some(ShellFormat::Sh);
+            return Ok((format, prefix));
+        }
+        let line = prefix[line_start..]
+            .strip_suffix(b"\n")
+            .unwrap_or(&prefix[line_start..]);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.starts_with(b"#") {
+            saw_comment = true;
+            continue;
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if line.starts_with(b"- cmd:") {
+            return Ok((Some(ShellFormat::Fish), prefix));
+        }
+        if let Some(header) = line.strip_prefix(b": ") {
+            if header
+                .first()
+                .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'-' | b':'))
+            {
+                return Ok((Some(ShellFormat::ZshExtended), prefix));
+            }
+        }
+        return Ok((Some(ShellFormat::Sh), prefix));
     }
 }
 
@@ -130,16 +157,19 @@ where
 
     for history_file in files {
         let mut ctx = (*ctx).clone();
-        ctx.filename = history_file.path.clone();
+        ctx.filename.clone_from(&history_file.path);
 
         let mut reader = history_file.reader;
 
-        let file_format = detect_format(&mut reader);
-        original_formats.insert(file_format);
+        let (file_format, prefix) = detect_format(&mut reader)?;
+        let mut reader = Cursor::new(prefix).chain(reader);
+        if let Some(file_format) = file_format {
+            original_formats.insert(file_format);
+        }
 
         // Collect all entries from this file, handling errors
         let mut file_entries = Vec::new();
-        match file_format {
+        match file_format.unwrap_or(ShellFormat::Sh) {
             ShellFormat::Fish => {
                 for entry_result in parse_fish_entries(&mut reader, &ctx) {
                     file_entries.push(entry_result?);
