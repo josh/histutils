@@ -215,37 +215,31 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 }
             }
             "--output-format" => {
-                if config.output_format.is_some() {
-                    return Err(ArgError(
-                        "usage: --output-format specified multiple times".to_string(),
-                    ));
-                }
-                if let Some(fmt) = args.next() {
-                    config.output_format = if let Some(f) = parse_format_opt(fmt) {
-                        Some(f)
-                    } else {
-                        return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
-                    };
-                } else {
+                let Some(fmt) = args.next() else {
                     return Err(ArgError("--output-format requires a value".to_string()));
-                }
+                };
+                set_output_format(&mut config, fmt)?;
             }
             _ if arg.starts_with("--output-format=") => {
-                if config.output_format.is_some() {
-                    return Err(ArgError(
-                        "usage: --output-format specified multiple times".to_string(),
-                    ));
-                }
                 let fmt = &arg["--output-format=".len()..];
-                config.output_format = if let Some(f) = parse_format_opt(fmt) {
-                    Some(f)
-                } else {
-                    return Err(ArgError(format!("usage: unknown --output-format={fmt}")));
-                };
+                set_output_format(&mut config, fmt)?;
             }
             _ if arg.starts_with("--head=") || arg.starts_with("--tail=") => {
                 let (flag, value) = arg.split_once('=').expect("split on '='");
                 set_limit(&mut config, flag, value)?;
+            }
+            _ if arg.starts_with("--output=") => {
+                let path = &arg["--output=".len()..];
+                config.outputs.push(path.to_string());
+            }
+            "--" => {
+                // End of options: everything after is a FILE operand, even
+                // if it starts with a dash.
+                config.paths.extend(args.by_ref().cloned());
+                break;
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(ArgError(format!("usage: unknown option '{arg}'")));
             }
             _ => {
                 config.paths.push(arg.clone());
@@ -262,6 +256,21 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
     }
 
     Ok(config)
+}
+
+fn set_output_format(config: &mut Config, fmt: &str) -> Result<(), ArgError> {
+    if config.output_format.is_some() {
+        return Err(ArgError(
+            "usage: --output-format specified multiple times".to_string(),
+        ));
+    }
+    match parse_format_opt(fmt) {
+        Some(f) => {
+            config.output_format = Some(f);
+            Ok(())
+        }
+        None => Err(ArgError(format!("usage: unknown --output-format={fmt}"))),
+    }
 }
 
 fn parse_format_opt(s: &str) -> Option<ShellFormat> {
