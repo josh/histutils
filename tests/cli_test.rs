@@ -306,6 +306,74 @@ fn unwritable_output_file_reports_path() {
 }
 
 #[test]
+fn output_equals() {
+    let input_str = ": 123:0;echo hello\n";
+    let input_file = TempFile::with_content(input_str);
+    let output_file = TempFile::with_content("");
+
+    let output = histutils(&[
+        &format!("--output={}", output_file.path_str()),
+        input_file.path_str(),
+    ]);
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    let output_str =
+        std::fs::read_to_string(&output_file.path).expect("failed to read output file");
+    assert_eq!(output_str, input_str);
+}
+
+#[test]
+fn unknown_long_flag_errors() {
+    let output = histutils(&["--bogus"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: unknown option '--bogus'\n");
+}
+
+#[test]
+fn unknown_short_flag_errors() {
+    let output = histutils(&["-x"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "usage: unknown option '-x'\n");
+}
+
+#[test]
+fn bare_dash_is_still_stdin() {
+    let output = histutils_with_stdin(&["--count", "-"], b"echo hello\n");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
+#[test]
+fn double_dash_ends_options() {
+    let dir = std::env::temp_dir().join(format!(
+        "histutils_test_dashdir_{}_{}",
+        process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).expect("failed to create dir");
+    let file = dir.join("-dashed-history");
+    std::fs::write(&file, ": 123:0;echo hello\n").expect("failed to write file");
+
+    let output = Command::new(get_bin())
+        .current_dir(&dir)
+        .args(["--output-format", "sh", "--", "-dashed-history"])
+        .output()
+        .expect("failed to run process");
+
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir(&dir);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "echo hello\n");
+}
+
+#[test]
 fn head_limits_output() {
     let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
     let output = histutils(&["--output-format=sh", "--head", "2", temp_file.path_str()]);
