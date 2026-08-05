@@ -425,7 +425,14 @@ fn print_entry<E: std::fmt::Display>(ctx: &Context, line_no: usize, msg: E, entr
 }
 
 fn fix_command(entry: &mut HistoryEntry, ctx: &Context) {
-    if let Some(fixed_entry) = extract_corrupted_entity(entry) {
+    let mut fixed = false;
+    // Corruption can nest (a corrupted entry re-corrupted on a later write),
+    // so keep stripping headers until the command is clean.
+    while let Some(fixed_entry) = extract_corrupted_entity(entry) {
+        *entry = fixed_entry;
+        fixed = true;
+    }
+    if fixed {
         eprintln!(
             "{}: fixing corrupted header in command",
             if let Some(path) = &ctx.filename {
@@ -434,7 +441,6 @@ fn fix_command(entry: &mut HistoryEntry, ctx: &Context) {
                 "stdin".to_string()
             }
         );
-        *entry = fixed_entry;
     }
 }
 
@@ -463,8 +469,11 @@ fn extract_corrupted_entity(entry: &HistoryEntry) -> Option<HistoryEntry> {
     let mut fixed_entry = entry.clone();
     fixed_entry.command = new_command;
 
-    let is_zsh_entry = entry.duration.is_some();
-    if is_zsh_entry {
+    // Adopt the embedded metadata for zsh entries (whose own header was the
+    // corrupted duplicate) and for entries with no timestamp of their own
+    // (sh input), where the embedded header is the only record of when the
+    // command ran. Fish entries keep their own `when` timestamp.
+    if entry.duration.is_some() || entry.timestamp.is_none() {
         fixed_entry.timestamp = Some(embedded_ts);
         fixed_entry.duration = Some(embedded_dur);
     }
