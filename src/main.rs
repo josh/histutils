@@ -103,15 +103,28 @@ fn main() -> io::Result<()> {
             }
         }
 
-        for writer in &mut writers {
-            if let Err(err) = write_entries(writer, history.entries.iter().cloned(), fmt) {
-                eprintln!("{err}");
-                process::exit(1);
-            }
-        }
+        write_outputs(&mut writers, &history.entries, fmt);
     }
 
     Ok(())
+}
+
+fn write_outputs(
+    writers: &mut [OutputWriter],
+    entries: &[histutils::HistoryEntry],
+    fmt: ShellFormat,
+) {
+    for writer in writers {
+        if let Err(err) = write_entries(writer, entries.iter().cloned(), fmt) {
+            // A closed pipe (e.g. `histutils file | head`) is not an error,
+            // but the remaining outputs must still be written.
+            if err.kind() == io::ErrorKind::BrokenPipe {
+                continue;
+            }
+            eprintln!("{err}");
+            process::exit(1);
+        }
+    }
 }
 
 #[derive(Debug)]
