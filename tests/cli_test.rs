@@ -275,6 +275,37 @@ fn broken_pipe_still_writes_other_outputs() {
 }
 
 #[test]
+fn missing_input_file_reports_path() {
+    let output = histutils(&["/nonexistent/histutils-test-input"]);
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "/nonexistent/histutils-test-input: No such file or directory (os error 2)\n"
+    );
+}
+
+#[test]
+fn unwritable_output_file_reports_path() {
+    let input_file = TempFile::with_content(": 123:0;echo hello\n");
+
+    let output = histutils(&[
+        "--output",
+        "/nonexistent/histutils-test-output",
+        input_file.path_str(),
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "/nonexistent/histutils-test-output: No such file or directory (os error 2)\n"
+    );
+}
+
+#[test]
 fn head_limits_output() {
     let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
     let output = histutils(&["--output-format=sh", "--head", "2", temp_file.path_str()]);

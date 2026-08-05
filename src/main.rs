@@ -28,24 +28,7 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    let history_files: Vec<HistoryFile<InputReader>> = config
-        .paths
-        .into_iter()
-        .map(|p| -> io::Result<HistoryFile<InputReader>> {
-            if p == "-" {
-                Ok(HistoryFile {
-                    reader: InputReader::Stdin(BufReader::new(io::stdin())),
-                    path: None,
-                })
-            } else {
-                let f = File::open(&p)?;
-                Ok(HistoryFile {
-                    reader: InputReader::File(BufReader::new(f)),
-                    path: Some(std::path::PathBuf::from(p)),
-                })
-            }
-        })
-        .collect::<io::Result<Vec<_>>>()?;
+    let history_files = open_history_files(config.paths);
 
     let ctx = Context {
         fix: config.fix,
@@ -99,7 +82,13 @@ fn main() -> io::Result<()> {
             if path == "-" {
                 writers.push(OutputWriter::Stdout(io::stdout()));
             } else {
-                writers.push(OutputWriter::File(File::create(path)?));
+                match File::create(path) {
+                    Ok(f) => writers.push(OutputWriter::File(f)),
+                    Err(err) => {
+                        eprintln!("{path}: {err}");
+                        process::exit(1);
+                    }
+                }
             }
         }
 
@@ -125,6 +114,32 @@ fn write_outputs(
             process::exit(1);
         }
     }
+}
+
+fn open_history_files(paths: Vec<String>) -> Vec<HistoryFile<InputReader>> {
+    paths
+        .into_iter()
+        .map(|p| {
+            if p == "-" {
+                HistoryFile {
+                    reader: InputReader::Stdin(BufReader::new(io::stdin())),
+                    path: None,
+                }
+            } else {
+                let f = match File::open(&p) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        eprintln!("{p}: {err}");
+                        process::exit(1);
+                    }
+                };
+                HistoryFile {
+                    reader: InputReader::File(BufReader::new(f)),
+                    path: Some(std::path::PathBuf::from(p)),
+                }
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug)]
