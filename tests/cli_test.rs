@@ -1007,6 +1007,98 @@ mod fish {
     use super::*;
 
     #[test]
+    fn preserves_modern_metadata_and_escaped_paths() {
+        let input = "- cmd: echo hi\n  added_when: 80\n  future_field: ignored\n  paths:\n    - C:\\\\tmp\\nfile\n  when: 100\n";
+        let output = histutils_with_stdin(&["--output-format", "fish"], input.as_bytes());
+
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"- cmd: echo hi\n  when: 100\n  added_when: 80\n  paths:\n    - C:\\\\tmp\\nfile\n"
+        );
+    }
+
+    #[test]
+    fn merged_entries_keep_earliest_first_added_time() {
+        let first = TempFile::with_content("- cmd: echo hi\n  when: 100\n  added_when: 70\n");
+        let second = TempFile::with_content("- cmd: echo hi\n  added_when: 80\n  when: 100\n");
+        let output = histutils(&[
+            "--output-format",
+            "fish",
+            first.path_str(),
+            second.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"- cmd: echo hi\n  when: 100\n  added_when: 70\n"
+        );
+    }
+
+    #[test]
+    fn merged_reruns_keep_latest_when() {
+        let first = TempFile::with_content("- cmd: echo hi\n  when: 100\n  added_when: 50\n");
+        let second = TempFile::with_content("- cmd: echo hi\n  when: 200\n  added_when: 50\n");
+        let output = histutils(&[
+            "--output-format",
+            "fish",
+            first.path_str(),
+            second.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"- cmd: echo hi\n  when: 200\n  added_when: 50\n"
+        );
+    }
+
+    #[test]
+    fn preserves_same_timestamp_order_with_added_when() {
+        let input = "- cmd: first\n  when: 100\n  added_when: 90\n- cmd: second\n  when: 100\n  added_when: 80\n";
+        let output = histutils_with_stdin(&["--output-format", "fish"], input.as_bytes());
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, input.as_bytes());
+    }
+
+    #[test]
+    fn merged_reruns_use_latest_occurrence_order() {
+        let first = TempFile::with_content(
+            "- cmd: a\n  when: 100\n  added_when: 50\n- cmd: d\n  when: 200\n",
+        );
+        let second = TempFile::with_content("- cmd: a\n  when: 200\n  added_when: 50\n");
+        let output = histutils(&[
+            "--output-format",
+            "fish",
+            first.path_str(),
+            second.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"- cmd: d\n  when: 200\n- cmd: a\n  when: 200\n  added_when: 50\n"
+        );
+    }
+
+    #[test]
+    fn merged_reruns_do_not_carry_older_duration() {
+        let zsh = TempFile::with_content(": 50:999;echo hi\n");
+        let fish = TempFile::with_content("- cmd: echo hi\n  when: 100\n  added_when: 50\n");
+        let output = histutils(&[
+            "--output-format",
+            "zsh-extended",
+            zsh.path_str(),
+            fish.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b": 100:0;echo hi\n");
+    }
+
+    #[test]
     fn reads_fish_history() {
         let data_file = test_data_file("fish_common_history");
 

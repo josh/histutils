@@ -10,6 +10,7 @@ const MAX_COMMAND_LENGTH: usize = 1024; // 1KB limit
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HistoryEntry {
     pub timestamp: Option<u64>,
+    pub added_when: Option<u64>,
     pub duration: Option<u64>,
     pub command: String,
     pub paths: Option<Vec<String>>,
@@ -210,21 +211,36 @@ fn merge_entries(mut a: HistoryEntry, b: HistoryEntry) -> HistoryEntry {
         "both entries must have timestamps"
     );
     assert!(
-        a.timestamp == b.timestamp,
-        "both entries must have the same timestamp"
-    );
-    assert!(
         a.command == b.command,
         "both entries must have the same command"
     );
 
-    // Prefer non-zero durations, or fall back to any Some duration
-    match (a.duration, b.duration) {
-        // Prefer b's duration if a's is zero, or if a has no duration at all
-        (Some(0), Some(b_dur)) if b_dur > 0 => a.duration = Some(b_dur),
-        (None, Some(_)) => a.duration = b.duration,
-        // Otherwise keep a.duration
-        _ => {}
+    let a_first_added = a.added_when.or(a.timestamp);
+    let b_first_added = b.added_when.or(b.timestamp);
+    assert!(
+        a.timestamp == b.timestamp || a_first_added == b_first_added,
+        "entries must have the same timestamp or first-added time"
+    );
+
+    if a.timestamp == b.timestamp {
+        // Prefer non-zero durations, or fall back to any Some duration.
+        match (a.duration, b.duration) {
+            (Some(0), Some(b_dur)) if b_dur > 0 => a.duration = Some(b_dur),
+            (None, Some(_)) => a.duration = b.duration,
+            _ => {}
+        }
+    } else if b.timestamp > a.timestamp {
+        a.duration = b.duration;
+    }
+
+    a.timestamp = a.timestamp.max(b.timestamp);
+    a.added_when = match (a_first_added, b_first_added) {
+        (Some(a_time), Some(b_time)) => Some(a_time.min(b_time)),
+        (time @ Some(_), None) | (None, time @ Some(_)) => time,
+        (None, None) => None,
+    };
+    if a.added_when == a.timestamp {
+        a.added_when = None;
     }
 
     // Prefer non-empty paths from either side; if both have paths, keep `a`'s.
@@ -524,6 +540,7 @@ where
         );
         Some(Ok(HistoryEntry {
             timestamp: None,
+            added_when: None,
             duration: None,
             command,
             paths: None,
@@ -626,6 +643,7 @@ fn parse_zsh_raw_entry(
     );
     Ok(HistoryEntry {
         timestamp,
+        added_when: None,
         duration,
         command,
         paths: None,
@@ -764,28 +782,21 @@ fn parse_fish_raw_entry(
         return Err(ParseError::BlankCommand);
     }
 
-    if lines.len() < 2 {
-        return Err(ParseError::BadFishHeader);
-    }
-
-    let timestamp: u64;
-    let line = lines[1].strip_prefix(b"  ").unwrap_or(lines[1]);
-    if let Some(rest) = line.strip_prefix(b"when:") {
-        let ts_bytes = rest.strip_prefix(b" ").unwrap_or(rest);
-        let ts = str::from_utf8(ts_bytes)?.parse()?;
-        if ts > DISTANT_FUTURE {
-            return Err(ParseError::FutureTimestamp);
-        }
-        timestamp = ts;
-    } else {
-        return Err(ParseError::BadFishHeader);
-    }
-
+    let mut timestamp = None;
+    let mut added_when = None;
     let mut paths: Vec<String> = Vec::new();
-    if lines.len() > 2 {
-        let line = lines[2].strip_prefix(b"  ").unwrap_or(lines[2]);
-        if line.strip_prefix(b"paths:").is_some() {
-            let mut i = 3;
+    let mut i = 1;
+    while i < lines.len() {
+        let Some(line) = lines[i].strip_prefix(b"  ") else {
+            i += 1;
+            continue;
+        };
+        if let Some(rest) = line.strip_prefix(b"when:") {
+            timestamp = Some(parse_fish_timestamp(rest)?);
+        } else if let Some(rest) = line.strip_prefix(b"added_when:") {
+            added_when = Some(parse_fish_timestamp(rest)?);
+        } else if line == b"paths:" {
+            i += 1;
             while i < lines.len() {
                 let Some(path_line) = lines[i].strip_prefix(b"    ") else {
                     break;
@@ -795,14 +806,20 @@ fn parse_fish_raw_entry(
                 }
                 if let Some(path_bytes) = path_line.strip_prefix(b"- ") {
                     let path_str = str::from_utf8(path_bytes)?;
-                    paths.push(path_str.to_string());
+                    paths.push(unescape_fish(path_str));
                 } else {
                     break;
                 }
                 i += 1;
             }
+            continue;
         }
+        i += 1;
     }
+
+    let Some(timestamp) = timestamp else {
+        return Err(ParseError::BadFishHeader);
+    };
 
     debug_assert!(
         !command.contains('\0'),
@@ -810,10 +827,20 @@ fn parse_fish_raw_entry(
     );
     Ok(HistoryEntry {
         timestamp: Some(timestamp),
+        added_when,
         duration: None,
         command,
         paths: if paths.is_empty() { None } else { Some(paths) },
     })
+}
+
+fn parse_fish_timestamp(value: &[u8]) -> Result<u64, ParseError> {
+    let value = value.strip_prefix(b" ").unwrap_or(value);
+    let timestamp = str::from_utf8(value)?.parse()?;
+    if timestamp > DISTANT_FUTURE {
+        return Err(ParseError::FutureTimestamp);
+    }
+    Ok(timestamp)
 }
 
 #[must_use]
@@ -924,12 +951,30 @@ where
             )
         })?;
         writeln!(writer, "  when: {timestamp}")?;
+        if let Some(added_when) = entry.added_when.filter(|&time| time != timestamp) {
+            writeln!(writer, "  added_when: {added_when}")?;
+        }
         if let Some(paths) = &entry.paths {
             assert!(!paths.is_empty(), "paths was some but empty");
             writeln!(writer, "  paths:")?;
             for p in paths {
-                writeln!(writer, "    - {p}")?;
+                write!(writer, "    - ")?;
+                write_fish_escaped(writer, p)?;
+                writeln!(writer)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn write_fish_escaped<W: Write>(writer: &mut W, value: &str) -> IoResult<()> {
+    for part in value.split_inclusive(['\\', '\n']) {
+        if let Some(value) = part.strip_suffix('\\') {
+            write!(writer, "{value}\\\\")?;
+        } else if let Some(value) = part.strip_suffix('\n') {
+            write!(writer, "{value}\\n")?;
+        } else {
+            write!(writer, "{part}")?;
         }
     }
     Ok(())
@@ -961,5 +1006,26 @@ where
         }
     }
 
-    map.into_values().flatten()
+    let mut modern_map: BTreeMap<Option<u64>, Vec<(usize, HistoryEntry)>> = BTreeMap::new();
+    for (position, entry) in map.into_values().flatten().enumerate() {
+        let first_added = entry.added_when.or(entry.timestamp);
+        let entries = modern_map.entry(first_added).or_default();
+        if let Some((existing_position, existing)) = entries.iter_mut().find(|(_, item)| {
+            (entry.added_when.is_some() || item.added_when.is_some())
+                && item.command == entry.command
+        }) {
+            if entry.timestamp > existing.timestamp {
+                *existing_position = position;
+            } else if entry.timestamp == existing.timestamp {
+                *existing_position = (*existing_position).min(position);
+            }
+            *existing = merge_entries(existing.clone(), entry);
+            continue;
+        }
+        entries.push((position, entry));
+    }
+
+    let mut entries: Vec<_> = modern_map.into_values().flatten().collect();
+    entries.sort_by_key(|(position, entry)| (entry.timestamp, *position));
+    entries.into_iter().map(|(_, entry)| entry)
 }
