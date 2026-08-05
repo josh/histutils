@@ -18,7 +18,7 @@ fn main() -> io::Result<()> {
         match action {
             ConfigAction::PrintHelp => {
                 println!(
-                    "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--version] [FILE...]"
+                    "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--help] [--version] [FILE...]"
                 );
             }
             ConfigAction::PrintVersion => {
@@ -142,7 +142,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                if config.action.is_some() {
+                if matches!(config.action, Some(ConfigAction::PrintVersion)) {
                     return Err(ArgError(
                         "usage: --help and --version are mutually exclusive".to_string(),
                     ));
@@ -150,7 +150,7 @@ fn parse_args(args: &[String]) -> Result<Config, ArgError> {
                 config.action = Some(ConfigAction::PrintHelp);
             }
             "--version" | "-V" => {
-                if config.action.is_some() {
+                if matches!(config.action, Some(ConfigAction::PrintHelp)) {
                     return Err(ArgError(
                         "usage: --help and --version are mutually exclusive".to_string(),
                     ));
