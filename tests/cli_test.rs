@@ -284,6 +284,46 @@ fn normalizes_crlf_history_inputs() {
 }
 
 #[test]
+fn autodetection_uses_meaningful_records() {
+    let empty = TempFile::with_content(" \n\t\n");
+    let sh = TempFile::with_content(": echo ordinary colon command\n");
+    let output = histutils(&[empty.path_str(), sh.path_str()]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b": echo ordinary colon command\n");
+
+    let fish = TempFile::with_content("# fish history file\n\n- cmd: echo fish\n  when: 1\n");
+    let output = histutils(&[fish.path_str()]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"- cmd: echo fish\n  when: 1\n");
+
+    let long_preamble = "# preamble\n".repeat(1_000) + "- cmd: beyond buffer\n  when: 2\n";
+    let fish = TempFile::with_content(&long_preamble);
+    let output = histutils(&[fish.path_str()]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"- cmd: beyond buffer\n  when: 2\n");
+}
+
+#[test]
+fn empty_input_defaults_to_empty_sh_output() {
+    let output = histutils_with_stdin(&[], b" \n\t\n");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn comment_only_input_contributes_sh_format() {
+    let comments = TempFile::with_content("# sh comment\n");
+    let fish = TempFile::with_content("- cmd: echo fish\n  when: 1\n");
+    let output = histutils(&[comments.path_str(), fish.path_str()]);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        output.stderr,
+        b"usage: --output-format= required when multiple input formats are given\n"
+    );
+}
+
+#[test]
 fn writes_to_output_file() {
     let input_str = ": 123:0;echo hello\n";
     let input_file = TempFile::with_content(input_str);
