@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, BufRead, Cursor, Read, Result as IoResult, Write};
 
 use std::path::PathBuf;
@@ -1011,16 +1011,30 @@ where
     let mut map: BTreeMap<Option<u64>, Vec<HistoryEntry>> = BTreeMap::new();
 
     for entries_iter in entries_iterators {
+        // Occurrence index of each (timestamp, command) within this file, so
+        // duplicates inside one file are preserved: the file's k-th occurrence
+        // merges with the k-th matching entry gathered from earlier files.
+        let mut occurrence: HashMap<(u64, String), usize> = HashMap::new();
         for entry in entries_iter {
             let entries = map.entry(entry.timestamp).or_default();
 
             // Never merge entries with missing timestamps
-            if entry.timestamp.is_none() {
+            let Some(timestamp) = entry.timestamp else {
                 entries.push(entry);
                 continue;
-            }
+            };
 
-            if let Some(existing) = entries.iter_mut().find(|e| e.command == entry.command) {
+            let slot = occurrence
+                .entry((timestamp, entry.command.clone()))
+                .or_insert(0);
+            let index = *slot;
+            *slot += 1;
+
+            if let Some(existing) = entries
+                .iter_mut()
+                .filter(|e| e.command == entry.command)
+                .nth(index)
+            {
                 let merged = merge_entries(existing.clone(), entry);
                 *existing = merged;
             } else {

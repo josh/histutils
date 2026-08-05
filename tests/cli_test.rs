@@ -1124,6 +1124,9 @@ mod zsh {
 
     #[test]
     fn deduplicates_exact_matches() {
+        // Cross-file duplicates merge, but the duplicate pair inside the
+        // first file is real history (same command run twice in one second)
+        // and must survive.
         let temp_file1 = TempFile::with_content(": 1:0;one\n: 1:0;one\n: 2:0;two\n");
         let temp_file2 = TempFile::with_content(": 1:0;one\n: 2:0;two\n: 3:0;three\n");
 
@@ -1131,7 +1134,41 @@ mod zsh {
 
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-        assert_eq!(stdout, ": 1:0;one\n: 2:0;two\n: 3:0;three\n");
+        assert_eq!(stdout, ": 1:0;one\n: 1:0;one\n: 2:0;two\n: 3:0;three\n");
+    }
+
+    #[test]
+    fn preserves_same_file_duplicate_entries() {
+        let output = histutils_with_stdin(
+            &["--output-format", "zsh-extended"],
+            b": 100:0;ls\n: 100:0;ls\n: 101:0;ls\n",
+        );
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 100:0;ls\n: 100:0;ls\n: 101:0;ls\n");
+    }
+
+    #[test]
+    fn counts_same_file_duplicate_entries() {
+        let output = histutils_with_stdin(&["--count"], b": 100:0;ls\n: 100:0;ls\n: 101:0;ls\n");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+    }
+
+    #[test]
+    fn merging_identical_files_keeps_duplicate_counts() {
+        // Multiset union: two copies of a file that contains a same-second
+        // duplicate yield two entries, not four and not one.
+        let temp_file1 = TempFile::with_content(": 100:0;ls\n: 100:0;ls\n");
+        let temp_file2 = TempFile::with_content(": 100:0;ls\n: 100:0;ls\n");
+
+        let output = histutils(&[temp_file1.path_str(), temp_file2.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 100:0;ls\n: 100:0;ls\n");
     }
 
     #[test]
@@ -1301,6 +1338,20 @@ mod fish {
 
         assert!(output.status.success());
         assert_eq!(output.stdout, b": 100:0;echo hi\n");
+    }
+
+    #[test]
+    fn preserves_same_file_duplicates_without_added_when() {
+        // Classic fish entries (no added_when) recorded twice in the same
+        // second are real history and must both survive.
+        let input = b"- cmd: ls\n  when: 100\n- cmd: ls\n  when: 100\n";
+        let output = histutils_with_stdin(&["--output-format", "fish"], input);
+
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"- cmd: ls\n  when: 100\n- cmd: ls\n  when: 100\n"
+        );
     }
 
     #[test]
