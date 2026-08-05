@@ -926,9 +926,19 @@ where
     I: IntoIterator<Item = HistoryEntry>,
 {
     for entry in entries {
-        writeln!(writer, "{}", entry.command.replace('\n', "\\\n"))?;
+        writeln!(writer, "{}", sh_escape_command(&entry.command))?;
     }
     Ok(())
+}
+
+fn sh_escape_command(command: &str) -> String {
+    let mut escaped = command.replace('\n', "\\\n");
+    // A trailing backslash would read back as a line continuation and splice
+    // this entry into the next one; zsh disambiguates by appending a space.
+    if escaped.ends_with('\\') {
+        escaped.push(' ');
+    }
+    escaped
 }
 
 fn write_zsh_entries<W, I>(writer: &mut W, entries: I) -> IoResult<()>
@@ -948,7 +958,7 @@ where
             ": {}:{};{}",
             timestamp,
             entry.duration.unwrap_or(0),
-            entry.command.replace('\n', "\\\n")
+            sh_escape_command(&entry.command)
         )?;
     }
     Ok(())

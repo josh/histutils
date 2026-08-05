@@ -856,6 +856,54 @@ mod sh {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("command truncated from 2000 bytes to 1024 bytes"));
     }
+
+    #[test]
+    fn trailing_backslash_command_survives_roundtrip() {
+        // `echo foo\` followed by `echo bar` must stay two entries when
+        // written as sh and read back.
+        let fish_input = b"- cmd: echo foo\\\\\n  when: 100\n- cmd: echo bar\n  when: 200\n";
+
+        let sh_output = histutils_with_stdin(&["--output-format", "sh"], fish_input);
+        assert!(sh_output.status.success());
+        let sh_str = String::from_utf8(sh_output.stdout).expect("failed to convert to string");
+        assert_eq!(sh_str, "echo foo\\ \necho bar\n");
+
+        let count = histutils_with_stdin(&["--count"], sh_str.as_bytes());
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
+    }
+
+    #[test]
+    fn lone_backslash_command_survives_roundtrip() {
+        let fish_input = b"- cmd: \\\\\n  when: 100\n- cmd: echo bar\n  when: 200\n";
+
+        let sh_output = histutils_with_stdin(&["--output-format", "sh"], fish_input);
+        assert!(sh_output.status.success());
+        let sh_str = String::from_utf8(sh_output.stdout).expect("failed to convert to string");
+        assert_eq!(sh_str, "\\ \necho bar\n");
+
+        let count = histutils_with_stdin(&["--count"], sh_str.as_bytes());
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
+    }
+
+    #[test]
+    fn truncated_trailing_backslash_survives_roundtrip() {
+        // Truncation at 1024 bytes can land exactly on a backslash; the
+        // written entry must not absorb the following command on re-read.
+        let mut input = "a".repeat(1023);
+        input.push('\\');
+        input.push_str(&"b".repeat(100));
+        input.push_str("\necho next\n");
+
+        let sh_output = histutils_with_stdin(&["--output-format", "sh"], input.as_bytes());
+        assert!(sh_output.status.success());
+        let sh_str = String::from_utf8(sh_output.stdout).expect("failed to convert to string");
+
+        let count = histutils_with_stdin(&["--count"], sh_str.as_bytes());
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
+    }
 }
 
 mod zsh {
@@ -1206,6 +1254,24 @@ mod zsh {
             format!(":1: skipping distant future timestamp\n: {ts}:0;echo hi\n"),
         );
     }
+
+    #[test]
+    fn trailing_backslash_command_survives_roundtrip() {
+        let fish_input = b"- cmd: echo foo\\\\\n  when: 100\n- cmd: echo bar\n  when: 200\n";
+
+        let zsh_output = histutils_with_stdin(&["--output-format", "zsh-extended"], fish_input);
+        assert!(zsh_output.status.success());
+        let zsh_str = String::from_utf8(zsh_output.stdout).expect("failed to convert to string");
+        assert_eq!(zsh_str, ": 100:0;echo foo\\ \n: 200:0;echo bar\n");
+
+        // Both entries and their timestamps must survive a re-read.
+        let roundtrip =
+            histutils_with_stdin(&["--output-format", "zsh-extended"], zsh_str.as_bytes());
+        assert!(roundtrip.status.success());
+        let roundtrip_str =
+            String::from_utf8(roundtrip.stdout).expect("failed to convert to string");
+        assert_eq!(roundtrip_str, zsh_str);
+    }
 }
 
 mod fish {
@@ -1513,7 +1579,9 @@ mod fish {
 
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
-        assert_eq!(stdout, "echo \\q\nfoo\\\n");
+        // A trailing backslash gains a disambiguating space so it does not
+        // read back as a line continuation.
+        assert_eq!(stdout, "echo \\q\nfoo\\ \n");
     }
 
     #[test]
