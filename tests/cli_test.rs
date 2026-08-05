@@ -220,6 +220,61 @@ fn output_format_equals() {
 }
 
 #[test]
+fn broken_pipe_exits_success() {
+    // Enough entries to overflow the pipe buffer once the reader is gone.
+    let mut input_str = String::new();
+    for i in 1..=10_000 {
+        writeln!(input_str, ": {}:0;echo command_{}", 1_000_000_000 + i, i).unwrap();
+    }
+    let temp_file = TempFile::with_content(&input_str);
+
+    let mut child = Command::new(get_bin())
+        .arg(temp_file.path_str())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn process");
+
+    // Close the read end of the pipe without consuming any output.
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output().expect("failed to wait on child");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn broken_pipe_still_writes_other_outputs() {
+    let mut input_str = String::new();
+    for i in 1..=10_000 {
+        writeln!(input_str, ": {}:0;echo command_{}", 1_000_000_000 + i, i).unwrap();
+    }
+    let temp_file = TempFile::with_content(&input_str);
+    let out_file = TempFile::with_content("");
+
+    let mut child = Command::new(get_bin())
+        .args([
+            "--output",
+            "-",
+            "--output",
+            out_file.path_str(),
+            temp_file.path_str(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn process");
+
+    // Close stdout's read end; the file output must still be written fully.
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output().expect("failed to wait on child");
+    assert!(output.status.success());
+    let written = std::fs::read_to_string(&out_file.path).expect("failed to read output file");
+    assert_eq!(written.lines().count(), 10_000);
+}
+
+#[test]
 fn head_limits_output() {
     let temp_file = TempFile::with_content("echo one\necho two\necho three\n");
     let output = histutils(&["--output-format=sh", "--head", "2", temp_file.path_str()]);
