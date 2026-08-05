@@ -814,8 +814,20 @@ fn parse_fish_raw_entry(
                     break;
                 }
                 if let Some(path_bytes) = path_line.strip_prefix(b"- ") {
-                    let path_str = str::from_utf8(path_bytes)?;
-                    paths.push(unescape_fish(path_str));
+                    // A path is auxiliary metadata; repair invalid UTF-8
+                    // and null bytes like commands instead of dropping the
+                    // whole entry.
+                    let mut path_str = if let Ok(s) = str::from_utf8(path_bytes) {
+                        unescape_fish(s)
+                    } else {
+                        print_entry(ctx, line_no, "invalid UTF-8", data);
+                        unescape_fish(&String::from_utf8_lossy(path_bytes))
+                    };
+                    if path_str.contains('\0') {
+                        print_entry(ctx, line_no, "invalid null byte", data);
+                        path_str = path_str.replace('\0', "\u{FFFD}");
+                    }
+                    paths.push(path_str);
                 } else {
                     break;
                 }

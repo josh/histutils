@@ -1526,6 +1526,40 @@ mod fish {
             format!("{temp_path}:1: invalid null byte\n- cmd: echo\0test\n  when: 1000000000\n")
         );
     }
+
+    #[test]
+    fn non_utf8_path_keeps_entry() {
+        let temp_file =
+            TempFile::with_bytes(b"- cmd: ls\n  when: 100\n  paths:\n    - /tmp/\xff\n");
+
+        let output = histutils(&["--output-format", "fish", temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            "- cmd: ls\n  when: 100\n  paths:\n    - /tmp/\u{FFFD}\n"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("invalid UTF-8"), "got {stderr}");
+    }
+
+    #[test]
+    fn null_byte_path_is_sanitized() {
+        let temp_file =
+            TempFile::with_bytes(b"- cmd: ls\n  when: 100\n  paths:\n    - /tmp/\x00\xff\n");
+
+        let output = histutils(&["--output-format", "fish", temp_file.path_str()]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(
+            stdout,
+            "- cmd: ls\n  when: 100\n  paths:\n    - /tmp/\u{FFFD}\u{FFFD}\n"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("invalid null byte"), "got {stderr}");
+    }
 }
 
 mod mixed {
