@@ -975,6 +975,36 @@ mod zsh {
     }
 
     #[test]
+    fn fix_repairs_nested_duplicated_headers() {
+        let temp_file = TempFile::with_content(": 100:0;: 1:0;: 1747718589:5;lazyjj\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--fix", "--output-format", "zsh-extended", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert_eq!(stdout, ": 1747718589:5;lazyjj\n");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("fixing corrupted header in command"));
+    }
+
+    #[test]
+    fn fix_recovers_timestamp_for_sh_entries() {
+        // In an sh history file the embedded header is the only record of
+        // when the command ran; --fix should adopt it.
+        let temp_file = TempFile::with_content("plain\n: 1747718589:5;lazyjj\n");
+        let temp_path = temp_file.path_str();
+
+        let output = histutils(&["--fix", "--output-format", "zsh-extended", temp_path]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        assert!(stdout.contains(": 1747718589:5;lazyjj\n"), "got {stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("fixing corrupted header in command"));
+    }
+
+    #[test]
     fn skips_blank_commands() {
         let output =
             histutils_with_stdin(&["--count"], b": 1:0;echo hello\n: 2:0;\t\t\n: 3:0;world\n");
