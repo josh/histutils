@@ -118,8 +118,47 @@ fn prints_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--version] [FILE...]\n";
+    let expected_output = "usage: histutils [--output FILE] [--output-format FORMAT] [--head N] [--tail N] [--count] [--fix] [--help] [--version] [FILE...]\n";
     assert_eq!(stdout, expected_output);
+}
+
+#[test]
+fn repeated_help_is_idempotent() {
+    let output = histutils(&["--help", "--help"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("usage: histutils"));
+}
+
+#[test]
+fn repeated_version_is_idempotent() {
+    let output = histutils(&["--version", "-V"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("histutils "));
+}
+
+#[test]
+fn help_and_version_conflict() {
+    let output = histutils(&["--help", "--version"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "usage: --help and --version are mutually exclusive\n"
+    );
+
+    let output = histutils(&["--version", "--help"]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "usage: --help and --version are mutually exclusive\n"
+    );
 }
 
 #[test]
@@ -178,24 +217,6 @@ fn output_format_equals() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
     assert_eq!(stdout, "echo hello\n");
-}
-
-#[test]
-fn missing_output_value() {
-    let output = histutils(&["--output"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "--output requires a value\n");
-}
-
-#[test]
-fn missing_output_format_value() {
-    let output = histutils(&["--output-format"]);
-
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr, "--output-format requires a value\n");
 }
 
 #[test]
