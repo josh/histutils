@@ -36,18 +36,8 @@ fn main() -> io::Result<()> {
     };
     let mut history = parse_entries_with_ctx(history_files, &ctx)?;
 
-    if let Some(limit) = config.head {
-        if history.entries.len() > limit {
-            history.entries.truncate(limit);
-        }
-    } else if let Some(limit) = config.tail {
-        let len = history.entries.len();
-        if limit < len {
-            history.entries.drain(0..len - limit);
-        }
-    }
-
     if config.count {
+        apply_limit(&mut history.entries, config.head, config.tail);
         println!("{}", history.entries.len());
     } else {
         let detected_format = history.primary_format();
@@ -74,8 +64,13 @@ fn main() -> io::Result<()> {
                 eprintln!(
                     "warning: setting timestamp on entries without one; duplicates may be merged"
                 );
+                // Backfilled entries were sorted while timestampless; re-sort
+                // so the output stays chronological.
+                history.entries.sort_by_key(|entry| entry.timestamp);
             }
         }
+
+        apply_limit(&mut history.entries, config.head, config.tail);
 
         let mut writers = Vec::with_capacity(config.outputs.len());
         for path in &config.outputs {
@@ -140,6 +135,23 @@ fn open_history_files(paths: Vec<String>) -> Vec<HistoryFile<InputReader>> {
             }
         })
         .collect()
+}
+
+fn apply_limit(
+    entries: &mut Vec<histutils::HistoryEntry>,
+    head: Option<usize>,
+    tail: Option<usize>,
+) {
+    if let Some(limit) = head {
+        if entries.len() > limit {
+            entries.truncate(limit);
+        }
+    } else if let Some(limit) = tail {
+        let len = entries.len();
+        if limit < len {
+            entries.drain(0..len - limit);
+        }
+    }
 }
 
 #[derive(Debug)]

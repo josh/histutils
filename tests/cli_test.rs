@@ -1733,6 +1733,58 @@ mod mixed {
     use super::*;
 
     #[test]
+    fn backfilled_timestamps_sort_after_existing() {
+        let sh = TempFile::with_content("plain one\nplain two\n");
+        let zsh = TempFile::with_content(": 100:0;zsh old\n");
+
+        let output = histutils(&[
+            "--output-format",
+            "zsh-extended",
+            sh.path_str(),
+            zsh.path_str(),
+        ]);
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("failed to convert to string");
+        let lines: Vec<&str> = stdout.lines().collect();
+        // Backfilled entries get the current time, so they must come last.
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], ": 100:0;zsh old");
+        assert!(lines[1].ends_with(";plain one"), "got {}", lines[1]);
+        assert!(lines[2].ends_with(";plain two"), "got {}", lines[2]);
+    }
+
+    #[test]
+    fn head_and_tail_pick_chronological_ends_on_mixed_input() {
+        let sh = TempFile::with_content("plain one\nplain two\n");
+        let zsh = TempFile::with_content(": 100:0;zsh old\n");
+
+        let head = histutils(&[
+            "--output-format",
+            "zsh-extended",
+            "--head",
+            "1",
+            sh.path_str(),
+            zsh.path_str(),
+        ]);
+        assert!(head.status.success());
+        let head_str = String::from_utf8(head.stdout).expect("failed to convert to string");
+        assert_eq!(head_str, ": 100:0;zsh old\n");
+
+        let tail = histutils(&[
+            "--output-format",
+            "zsh-extended",
+            "--tail",
+            "1",
+            sh.path_str(),
+            zsh.path_str(),
+        ]);
+        assert!(tail.status.success());
+        let tail_str = String::from_utf8(tail.stdout).expect("failed to convert to string");
+        assert!(tail_str.ends_with(";plain two\n"), "got {tail_str}");
+    }
+
+    #[test]
     fn output_format_mixed_error() {
         let temp_file1 = TempFile::with_content(": 1234567891:0;echo foo\n");
         let temp_file2 = TempFile::with_content("- cmd: echo bar\n  when: 1234567892\n");
