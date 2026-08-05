@@ -939,17 +939,19 @@ where
     I: IntoIterator<Item = HistoryEntry>,
 {
     for entry in entries {
-        writeln!(
-            writer,
-            "- cmd: {}",
-            entry.command.replace('\\', "\\\\").replace('\n', "\\n")
-        )?;
+        // Validate before writing anything so an entry without a timestamp
+        // does not leave a dangling partial record in the output.
         let timestamp = entry.timestamp.ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "entry missing required timestamp",
             )
         })?;
+        writeln!(
+            writer,
+            "- cmd: {}",
+            entry.command.replace('\\', "\\\\").replace('\n', "\\n")
+        )?;
         writeln!(writer, "  when: {timestamp}")?;
         if let Some(added_when) = entry.added_when.filter(|&time| time != timestamp) {
             writeln!(writer, "  added_when: {added_when}")?;
