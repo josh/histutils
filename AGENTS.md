@@ -1,10 +1,10 @@
 # Agents Guide
 
-This project is written in Rust and assumes Rust 1.89 or newer.
+This project is written in Rust. `rust-toolchain.toml` pins the toolchain.
 
 ## Environment Setup
 
-1. Install Rust 1.89 or later via rustup
+1. Install rustup; it installs the pinned toolchain on first use
 
 ## Dependencies
 
