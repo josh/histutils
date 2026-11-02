@@ -240,7 +240,7 @@ fn broken_pipe_exits_success() {
 
     let output = child.wait_with_output().expect("failed to wait on child");
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, b"");
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn missing_input_file_reports_path() {
     let output = histutils(&["/nonexistent/histutils-test-input"]);
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         stderr,
@@ -317,7 +317,7 @@ fn output_equals() {
     ]);
 
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
     let output_str =
         std::fs::read_to_string(&output_file.path).expect("failed to read output file");
     assert_eq!(output_str, input_str);
@@ -482,7 +482,7 @@ fn autodetection_uses_meaningful_records() {
 fn empty_input_defaults_to_empty_sh_output() {
     let output = histutils_with_stdin(&[], b" \n\t\n");
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn writes_to_output_file() {
     let output = histutils(&["--output", output_file.path_str(), input_file.path_str()]);
 
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 
     let output_str =
         std::fs::read_to_string(&output_file.path).expect("failed to read output file");
@@ -541,7 +541,7 @@ fn overwrites_existing_output_file() {
     let output = histutils(&["--output", output_file.path_str(), input_file.path_str()]);
 
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 
     let output_str =
         std::fs::read_to_string(&output_file.path).expect("failed to read output file");
@@ -564,7 +564,7 @@ fn writes_to_multiple_output_files() {
     ]);
 
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 
     let output_str1 =
         std::fs::read_to_string(&output_file1.path).expect("failed to read output file");
